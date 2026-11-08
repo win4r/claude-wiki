@@ -43,6 +43,30 @@ Cost: $0.00 (no paid runs).
   full share ($0.10). Real API usage was probably about zero.
 - Open: why 2.1.319 drops these tools. The changelog for 2.1.309–2.1.319 says nothing about it. M0 waits on the owner.
 
+### Tool probe (`wiki smoke --probe-tools`, approved; 2026-11-08)
+
+Added `wiki smoke --probe-tools`. It starts runs through the runner and stops each one at `system/init`, before
+any model call. A final real reader run has the tools check turned off. `system/init` tools:
+
+| Flags | Tools asked for | Tools started |
+| --- | --- | --- |
+| `--bare --tools default` | default | Bash, Edit, Read |
+| `--bare` | Read, Glob, Grep | Read |
+| `--bare`, acceptEdits | Read, Write, Edit, Glob, Grep | Edit, Read |
+| `--bare`, default mode, host prompts | Read, Write, Edit, Glob, Grep | Edit, Read |
+| `--restricted --strict-mcp-config --disable-slash-commands` (no `--bare`) | Read, Glob, Grep | Glob, Grep, Read |
+| same, acceptEdits | Read, Write, Edit, Glob, Grep | Edit, Glob, Grep, Read, Write |
+
+- Bare mode in 2.1.319 has its own fixed tool set (Bash, Edit, Read). `--tools` can only narrow it, never add
+  Write, Glob or Grep. Permission mode and permission prompts make no difference.
+- The real reader run tried Grep anyway. The call failed and Grep was not usable, so init's list is accurate.
+- Restricted mode without `--bare` starts exactly the role tools (EndConversation isn't listed). The key still
+  comes from `ANTHROPIC_API_KEY`. It does load four built-in plugins (agents-md, telemetry, privacy,
+  plugin-authoring), and it does not skip what `--bare` skips (CLAUDE.md discovery, auto-memory, hooks, keychain reads).
+  Switching away from `--bare` changes SPEC's design, so it waits on the owner.
+
+Cost: $0.0006 (ledger). M0 total: $0.10 of the $1 allowance.
+
 Cost so far: $0.10 (ledger) of the $1 allowance.
 
 ## M1 Offline pipeline — done (2026-11-08)
