@@ -206,6 +206,31 @@ What the answers show:
 
 Cost: $0.24 (allowance $4). Total spent so far: $1.45 of $50.
 
+## M4 Dream — done (2026-11-08)
+
+The owner approved M4. It ran 5 wiki-mode asks (about $0.01 in all; transcripts are in `runs/ask/`), then `wiki dream`, estimated at
+$1.75 (cap $3) and actually $0.09. That covered one analyst run, one apply run, a recompile of 5 pages and a reindex.
+
+Branch `dream/20261108T104218Z` held 6 findings: 1 WRONG, 3 MISS, 1 UNPLACED and 1 mislabelled CONFLICT.
+- The fee-funding relation ("guarantees certain obligations of Spaceship Purchaser") was retracted. An addendum says the
+  guarantee covers the "Buyer Parties", Merger Sub included, and lists the 12 FFA Investor funds.
+- Anton Levy's share-count CONFLICT was really two different securities (25,390 Class A shares and 6,197 RSUs). An addendum explains
+  this and adds the real red flag: the disposal is dated 2024-10-14 but reported "pursuant to the Offer", which expired on 2024-10-11.
+- The June 21 Tock 8-K was added to Courtenay O'Connor's signings. The 12 fund names became `permira` aliases, and a new open question asks
+  whether Permira Advisers LLC advises them.
+
+`wiki check --against` the base passed. The summary (6 findings, 16 files, 0 conflicts marked, 1 line retracted)
+matched the diff. The owner reviewed it and accepted it: merged `--no-ff` and tagged
+`dream-accepted-20261108T104218Z`. `wiki check` on main: 0 errors.
+
+Follow-ups noted, not yet done:
+- The index run rewrote `README.md` and dropped what the per-unit folders hold, how `_aliases.md` maps names, and the
+  "computed" label. The index prompt should keep those points.
+- The ask prompts should require unit ids in `source:` tags (see M3).
+- `wiki ask` prints "Cost $0.00" for sub-cent answers and should use the four-decimal format.
+
+Cost: $0.10 (allowance $4). Total spent so far: $1.54 of $50.
+
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
 M2, M3 and M4 each end in paid runs, and M0's live checks come first, so these milestones are not done. Their
