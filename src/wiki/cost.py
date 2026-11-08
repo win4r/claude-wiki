@@ -174,10 +174,23 @@ def authorize(spent: float, total: float, estimate: float, cap: float, approve_o
     return min(cap, remaining)
 
 
-def share(estimates: dict[str, float], cap: float, reserve: float = 0.10) -> dict[str, float]:
-    """Split a command's cap across its runs in proportion to their estimates, holding back the reserve."""
+def share(estimates: dict[str, float], cap: float, reserve: float = 0.10,
+          floor: float = 0.0) -> dict[str, float]:
+    """Split a command's cap across its runs in proportion to their estimates, holding back the reserve.
+
+    Each run gets at least `floor` (when the pool allows it), taken from the larger shares, so a cheap run is
+    not stopped by a budget of a cent or two. The shares still sum to at most cap * (1 - reserve).
+    """
+    pool = cap * (1 - reserve)
     total = sum(estimates.values())
     if total <= 0:
         n = max(1, len(estimates))
-        return {k: cap * (1 - reserve) / n for k in estimates}
-    return {k: cap * (1 - reserve) * v / total for k, v in estimates.items()}
+        return {k: pool / n for k in estimates}
+    out = {k: pool * v / total for k, v in estimates.items()}
+    floor = min(floor, pool / max(1, len(out)))
+    low = {k for k, v in out.items() if v < floor}
+    if not low:
+        return out
+    high_total = sum(v for k, v in out.items() if k not in low)
+    scale = (pool - floor * len(low)) / high_total if high_total else 0.0
+    return {k: floor if k in low else v * scale for k, v in out.items()}

@@ -51,6 +51,7 @@ compile_group = 10
 dream_group = 10
 dream_min_transcripts = 5
 reserve = 0.10               # share of each cap held back when splitting it across runs
+min_run_usd = 0.10           # each run's budget is at least this, taken from the larger shares
 # api_key_settings = "/path/to/settings.json"   # a --settings file with an apiKeyHelper, for unattended runs
 
 [limits.extract]

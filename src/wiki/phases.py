@@ -120,7 +120,12 @@ class Context:
 
     def budget(self, task_id: str, fallback: float) -> float:
         base = task_id.removesuffix("-retry")
-        return float(self.shares.get(base, fallback))
+        if base in self.shares:
+            return float(self.shares[base])
+        # a run the estimate didn't foresee (one more compile group, say): its phase's largest share
+        phase = base.rsplit("-", 1)[0]
+        same = [v for k, v in self.shares.items() if k.rsplit("-", 1)[0] == phase]
+        return float(max(same)) if same else fallback
 
     # --- state.json
     def state_path(self) -> Path:
@@ -627,7 +632,8 @@ def build(ws, resume: bool = False, estimate_only: bool = False, max_usd: float 
         Runner(ws, cfg, ledger).check_ready()
         cap = cost_mod.authorize(ledger.spent(), cfg.total_usd, est.total, cap_limit, approve_over_cap,
                                  "this build", float(cfg.runner("reserve", 0.10)))
-        shares = cost_mod.share(est.tasks, cap, float(cfg.runner("reserve", 0.10)))
+        shares = cost_mod.share(est.tasks, cap, float(cfg.runner("reserve", 0.10)),
+                                floor=float(cfg.runner("min_run_usd", 0.10)))
         state = {"build_id": run_id, "units": units, "batches": batches, "shares": shares, "cap": cap,
                  "estimate": est.total, "model": model, "phases_done": [], "tasks": {}, "finished": False,
                  "started": datetime.now(UTC).isoformat(timespec="seconds")}

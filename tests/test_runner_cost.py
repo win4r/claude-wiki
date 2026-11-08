@@ -190,3 +190,13 @@ def test_concurrency_limit(ws, tmp_path):
     [t.start() for t in threads]
     [t.join() for t in threads]
     assert min(seen) >= 0 and len(seen) == 4
+
+
+def test_share_floor_keeps_the_pool():
+    s = cost_mod.share({"extract": 0.34, "check": 0.43, "compile-01": 0.0025, "compile-02": 0.0025}, 6.0, 0.10,
+                       floor=0.10)
+    assert s["compile-01"] == pytest.approx(0.10) and s["compile-02"] == pytest.approx(0.10)
+    assert sum(s.values()) == pytest.approx(5.4)
+    assert s["check"] / s["extract"] == pytest.approx(0.43 / 0.34)
+    tiny = cost_mod.share({"a": 1.0, "b": 0.001}, 0.10, 0.10, floor=0.10)  # the pool can't give everyone the floor
+    assert sum(tiny.values()) == pytest.approx(0.09)

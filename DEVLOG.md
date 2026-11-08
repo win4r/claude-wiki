@@ -142,6 +142,41 @@ run); one unit's facts over 80 KB stayed on a single fact page (now split by lin
 
 Cost: $0.00 (allowance $0).
 
+## M2 Quickstart build — done (2026-11-08)
+
+`wiki fetch-example --tier quickstart` downloaded the 8 SEC filings and added the 2 synthetic files: 10 units,
+92 KB of text, one batch. The owner gave the EDGAR contact in chat; it was passed only in the environment of that one
+command and appears in no workspace file. The paid build was approved at an estimate of $0.80 (cap $6).
+
+Result: `build-20261108T095158Z` finished in 24 minutes, with every task succeeding on its first attempt. `wiki check` found 0
+errors and 1 warning: the wiki is 284 KB against a 92 KB corpus, which is expected because entity pages repeat the per-unit
+facts. It also left 1 note (`entities/squarespace.md`, 22.6 KB, the deal hub). The build produced 104 pages, including 46
+entity pages, every unit's notes, addenda, metrics, relations and open questions, 3 contract files, `_index.md` with a
+domain map, and `escalations.md` with 20 red flags in order, the TopCo cash sales first. A spot check of
+`squarespace-tender-offer` showed source tags on every fact line, with the offer-expiry CONFLICT recorded between the Form 4 and the 8-K.
+
+| Phase | Estimate | Actual | Turns (limit) |
+| --- | --- | --- | --- |
+| extract | $0.34 | $0.38 | 67 (150) |
+| check | $0.43 | $0.49 | 86 (150) |
+| resolve | $0.01 | $0.02 | 27 (150) |
+| link | $0.01 | $0.03 | 6 (60) |
+| compile (5 runs) | $0.01 | $0.05 | 19–24 (40) |
+| index | $0.01 | $0.03 | 7 (60) |
+| total | $0.80 | $1.00 | |
+
+Tuning after the run:
+- Turn limits are left as they are: the busiest run used 86 of 150.
+- Per-run budgets were too tight for the small phases. Each run's share is proportional to its estimate, so a compile run
+  got a $0.014 cap and one used $0.0135 of it. A budget stop isn't retried, so a stop there would have failed the build. Now
+  each run gets at least `runner.min_run_usd` ($0.10), taken from the larger shares, and the shares still sum to at most
+  90% of the cap.
+- The estimate assumed 4 compile groups and the build needed 5. The unplanned 5th group used a flat $0.50
+  fallback; it now gets its phase's largest share.
+- The next estimate recalibrates from these ledger figures (per run and per character, by phase and model).
+
+Cost: $1.00 (allowance $8). Total spent so far: $1.21 of $50.
+
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
 M2, M3 and M4 each end in paid runs, and M0's live checks come first, so these milestones are not done. Their
@@ -171,4 +206,4 @@ Tests: ask in each mode (working folders and added folders per SPEC's table, eva
 the trap refused, eval end to end and its scoring, question-file validation, dream accept / discard /
 fewer than 5 transcripts / a dream that changes a fact line is refused.
 
-Cost: $0.00. Total spent so far: $0.21 of $50 (all M0).
+Cost: $0.00 (M2's paid build is recorded in its own entry above).
