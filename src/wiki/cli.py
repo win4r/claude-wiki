@@ -65,6 +65,8 @@ def parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("smoke", help="M0's live checks of Claude Code (paid, about $0.35)")
     p.add_argument("--no-long-prompt", action="store_true")
+    p.add_argument("--probe-tools", action="store_true",
+                   help="diagnose which tools Claude Code starts under each flag (about $0.10)")
     _paid(p)
     return ap
 
@@ -141,8 +143,11 @@ def _run(ws, args) -> int:
         return run_eval(ws, Path(args.file), estimate_only=args.estimate, max_usd=args.max_usd, model=args.model,
                         concurrency=args.concurrency, approve_over_cap=args.approve_over_cap, modes=modes)
     if args.cmd == "smoke":
-        from .smoke import smoke
+        from .smoke import probe_tools, smoke
 
+        if args.probe_tools:
+            return probe_tools(ws, estimate_only=args.estimate, model=args.model,
+                               approve_over_cap=args.approve_over_cap)
         return smoke(ws, estimate_only=args.estimate, model=args.model, approve_over_cap=args.approve_over_cap,
                      include_long=not args.no_long_prompt)
     raise WikiError(f"unknown command {args.cmd}")

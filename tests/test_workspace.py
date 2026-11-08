@@ -128,3 +128,29 @@ def test_live_smoke(tmp_path, monkeypatch):
     if not os.path.exists(os.path.join(ws_dir, "wiki.toml")):
         assert main(["init", ws_dir]) == 0
     assert main(["-w", ws_dir, "smoke"]) == 0
+
+
+def test_probe_tools_offline(ws):
+    assert main(["-w", str(ws.root), "smoke", "--probe-tools", "--estimate"]) == 0
+    assert main(["-w", str(ws.root), "smoke", "--probe-tools"]) == 0
+    run_dir = sorted(ws.runs.glob("probe-*"))[-1]
+    report = json.loads((run_dir / "report.json").read_text())
+    assert all(p["outcome"] == "probe" for p in report["probes"].values())
+    assert report["probes"]["bare-reader"]["tools"] == ["Read", "Glob", "Grep", "EndConversation"]
+    restricted = json.loads((run_dir / "restricted-reader.cmd.json").read_text())["argv"]
+    assert "--bare" not in restricted and "--restricted" in restricted
+    assert "--permission-prompts" not in json.loads(
+        (run_dir / "bare-writer-default-mode-host-prompts.cmd.json").read_text())["argv"]
+    assert report["real_grep"]["outcome"] == "success"
+
+
+def test_real_runs_keep_the_default_flags(ws):
+    from wiki.runner import Runner, RunSpec
+
+    r = Runner(ws, ws.config())
+    argv = r.argv(RunSpec(command="x", phase="x", role="extract", task_id="t", run_dir=ws.runs, cwd=ws.root,
+                          task="t", system_prompt_file=ws.root / "p", model="haiku", budget_usd=1, turns=1,
+                          timeout_s=1))
+    assert argv[1] == "--bare" and "--restricted" not in argv
+    assert argv[argv.index("--tools") + 1] == "Read,Write,Edit,Glob,Grep"
+    assert argv[argv.index("--permission-mode") + 1] == "acceptEdits" and "--permission-prompts" in argv

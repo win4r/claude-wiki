@@ -75,7 +75,7 @@ def smoke(ws, estimate_only: bool = False, model: str | None = None, approve_ove
     report["checks"]["key_works_in_bare_mode"] = rr.outcome == "success"
     report["checks"]["reader_init_tools"] = {"tools": rr.init_tools, "ok": rr.init_tools is not None and
                                              set(rr.init_tools) - {"EndConversation"} == set(ROLE_TOOLS["ask"])}
-    report["checks"]["grep_finds_added_folder"] = {"ok": word in rr.text and any(u["name"] == "Grep" for u in uses),
+    report["checks"]["grep_finds_added_folder"] = {"ran": rr.outcome == "success", "ok": word in rr.text and any(u["name"] == "Grep" for u in uses),
                                                    "answer": rr.text[:200]}
     # 2: writer tools
     rw = runner.run(spec("writer-init", "extract", "Reply with the single word OK. Do not use any tool.", inside,
@@ -86,7 +86,8 @@ def smoke(ws, estimate_only: bool = False, model: str | None = None, approve_ove
     rd = runner.run(spec("deny", "ask", f"Read the file {outside / 'private.txt'} and reply with its first line. "
                          "If you cannot read it, reply DENIED.", inside))
     report["checks"]["reader_denied_outside"] = {
-        "ok": "OUTSIDE-SECRET-LINE" not in rd.text, "denials": len(rd.permission_denials), "answer": rd.text[:200]}
+        "ran": rd.outcome == "success", "ok": rd.outcome == "success" and "OUTSIDE-SECRET-LINE" not in rd.text,
+        "denials": len(rd.permission_denials), "answer": rd.text[:200]}
     # 5: a prompt over 100,000 tokens
     if include_long:
         filler = ("The quick brown fox jumps over the lazy dog. " * 20 + "\n")
@@ -112,3 +113,90 @@ def smoke(ws, estimate_only: bool = False, model: str | None = None, approve_ove
     spent = sum(e.get("cost_usd", 0) for e in ledger.entries() if e.get("run_id") == run_dir.name)
     print(f"Spent {cost_mod.usd(spent)}. Report: {run_dir / 'report.json'}")
     return 0
+
+
+PROBE_ESTIMATE_USD = 0.10
+RESTRICTED = ["--restricted", "--strict-mcp-config", "--disable-slash-commands"]
+READER = "Read,Glob,Grep"
+WRITER = "Read,Write,Edit,Glob,Grep"
+
+
+def probe_tools(ws, estimate_only: bool = False, model: str | None = None, approve_over_cap: bool = False) -> int:
+    """Which tools Claude Code starts under each flag combination.
+
+    Every probe but the last is stopped as soon as system/init arrives, before any model call. The last one is
+    a real reader run with the tools check off: it shows whether Grep works even when init doesn't list it.
+    """
+    cfg = ws.config()
+    ledger = Ledger(ws.ledger_path)
+    model = model or cfg.model("extract")
+    print(f"Estimate for wiki smoke --probe-tools: {cost_mod.usd(PROBE_ESTIMATE_USD)} (cap $1.00)")
+    if estimate_only:
+        return 0
+    runner = Runner(ws, cfg, ledger)
+    runner.check_ready()
+    cost_mod.authorize(ledger.spent(), cfg.total_usd, PROBE_ESTIMATE_USD, 1.0, approve_over_cap,
+                       "wiki smoke --probe-tools")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_dir = private_dir(ws.runs / f"probe-{ts}")
+    work = private_dir(run_dir / "work")
+    inside = private_dir(work / "cwd")
+    added = private_dir(work / "added")
+    word = f"ZEBRA-{random.randint(1000, 9999)}"
+    (added / "haystack.txt").write_text("lorem ipsum\n" * 50 + f"the marker is {word}\n" + "dolor\n" * 50)
+    prompt = run_dir / "probe_prompt.md"
+    prompt.write_text("You are a smoke test of a command-line harness. Follow the task exactly and reply briefly.\n")
+    probes = [
+        ("bare-default", dict(tools_override="default")),
+        ("bare-reader", dict(tools_override=READER)),
+        ("bare-writer-acceptEdits", dict(tools_override=WRITER, permission_mode="acceptEdits")),
+        ("bare-writer-default-mode-host-prompts", dict(tools_override=WRITER, permission_mode="default",
+                                                       permission_prompts=False)),
+        ("restricted-reader", dict(tools_override=READER, bare=False, extra_args=RESTRICTED)),
+        ("restricted-writer-acceptEdits", dict(tools_override=WRITER, bare=False, extra_args=RESTRICTED,
+                                               permission_mode="acceptEdits")),
+    ]
+    report: dict = {"time": ts, "model": model, "probes": {}}
+    for name, opts in probes:
+        r = runner.run(RunSpec(command="smoke", phase="probe", role="ask", task_id=name, run_dir=run_dir, cwd=inside,
+                               task="Reply with the single word OK.", system_prompt_file=prompt, model=model,
+                               budget_usd=0.01, turns=1, timeout_s=60, stop_at_init=True, **opts))
+        init = _init_event(r.stream_path)
+        report["probes"][name] = {"tools": r.init_tools, "apiKeySource": (init or {}).get("apiKeySource"),
+                                  "argv_flags": _flags(run_dir / f"{name}.cmd.json"), "outcome": r.outcome}
+    # the one real run: does Grep work although init doesn't list it?
+    r = runner.run(RunSpec(command="smoke", phase="probe", role="ask", task_id="bare-reader-real-grep",
+                           run_dir=run_dir, cwd=inside, add_dirs=[added], system_prompt_file=prompt, model=model,
+                           task=f"Use the Grep tool to search the folder {added} for the text "
+                                f"'{word.split('-')[0]}-'. Reply with the full marker you find and the file name.",
+                           budget_usd=0.05, turns=6, timeout_s=180, check_tools=False))
+    uses = _tool_uses(r.stream_path)
+    report["real_grep"] = {"outcome": r.outcome, "init_tools": r.init_tools, "tool_uses": [u["name"] for u in uses],
+                           "found_marker": word in r.text, "answer": r.text[:300], "cost_usd": r.cost_usd}
+    remove_tree(work)
+    (run_dir / "report.json").write_text(json.dumps(report, indent=1))
+    print(json.dumps(report, indent=1))
+    spent = sum(e.get("cost_usd", 0) for e in ledger.entries() if e.get("run_id") == run_dir.name)
+    print(f"Spent {cost_mod.usd(spent)}. Report: {run_dir / 'report.json'}")
+    return 0
+
+
+def _init_event(stream: Path) -> dict | None:
+    for raw in Path(stream).read_text(errors="replace").splitlines():
+        try:
+            ev = json.loads(raw)
+        except ValueError:
+            continue
+        if ev.get("type") == "system" and ev.get("subtype") == "init":
+            return ev
+    return None
+
+
+def _flags(cmd_file: Path) -> list[str]:
+    argv = json.loads(cmd_file.read_text())["argv"]
+    keep = {"--bare", "--restricted", "--tools", "--permission-mode", "--permission-prompts"}
+    out = []
+    for i, a in enumerate(argv):
+        if a in keep:
+            out.append(a if a in ("--bare", "--restricted") else f"{a} {argv[i + 1]}")
+    return out

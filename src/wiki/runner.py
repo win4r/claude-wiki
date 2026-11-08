@@ -35,7 +35,7 @@ ROLE_TOOLS = {
 }
 WRITER_ROLES = {"extract", "check", "resolve", "link", "index", "compile", "dream_apply"}
 ALWAYS_PRESENT = {"EndConversation"}  # --tools cannot remove it
-NOT_RETRYABLE = {"success", "error_max_turns", "error_max_budget_usd", "bad_tools"}
+NOT_RETRYABLE = {"success", "error_max_turns", "error_max_budget_usd", "bad_tools", "probe"}
 # Environment passed to claude; nothing else from os.environ reaches the process.
 ENV_PASS = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TERM",
             "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR", "SHELL")
@@ -68,6 +68,14 @@ class RunSpec:
     timeout_s: float
     add_dirs: list[Path] = field(default_factory=list)
     input_chars: int | None = None
+    # diagnostics only (wiki smoke --probe-tools); the defaults are what every real run uses
+    tools_override: str | None = None
+    bare: bool = True
+    permission_mode: str | None = None
+    permission_prompts: bool = True
+    stop_at_init: bool = False
+    check_tools: bool = True
+    extra_args: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -180,15 +188,16 @@ class Runner:
 
     # --- the command line
     def argv(self, spec: RunSpec) -> list[str]:
-        mode = "acceptEdits" if spec.role in WRITER_ROLES else "dontAsk"
-        cmd = [
-            claude_bin(), "--bare", "-p", spec.task,
+        mode = spec.permission_mode or ("acceptEdits" if spec.role in WRITER_ROLES else "dontAsk")
+        tools = spec.tools_override if spec.tools_override is not None else ",".join(ROLE_TOOLS[spec.role])
+        cmd = [claude_bin()] + (["--bare"] if spec.bare else []) + [
+            "-p", spec.task,
             "--model", spec.model,
             "--append-system-prompt-file", str(spec.system_prompt_file),
-            "--tools", ",".join(ROLE_TOOLS[spec.role]),
+            "--tools", tools,
             "--permission-mode", mode,
-            "--permission-prompts", "none",
-        ]
+        ] + (["--permission-prompts", "none"] if spec.permission_prompts else [])
+        cmd += list(spec.extra_args)
         for d in spec.add_dirs:
             cmd += ["--add-dir", str(d)]
         settings = self.config.runner("api_key_settings")
@@ -220,7 +229,7 @@ class Runner:
 
     def _execute(self, spec, argv, stream_path):
         init = result = None
-        timed_out = bad_tools = False
+        timed_out = bad_tools = probed = False
         stderr_path = stream_path.with_suffix(".stderr")
         with open(stream_path, "w", encoding="utf-8") as out, open(stderr_path, "w") as err:
             try:
@@ -262,7 +271,10 @@ class Runner:
                     continue
                 if ev.get("type") == "system" and ev.get("subtype") == "init" and init is None:
                     init = ev
-                    if not tools_ok(spec.role, ev.get("tools")):
+                    if spec.stop_at_init:
+                        probed = True
+                        threading.Thread(target=stop, args=("probe",), daemon=True).start()
+                    elif spec.check_tools and not tools_ok(spec.role, ev.get("tools")):
                         bad_tools = True
                         threading.Thread(target=stop, args=("bad_tools",), daemon=True).start()
                 elif ev.get("type") == "result":
@@ -270,11 +282,15 @@ class Runner:
             proc.wait()
             done.set()
             timed_out = state["timed_out"]
+        if probed:
+            bad_tools = "probe"
         return init, result, timed_out, bad_tools, proc.returncode
 
     def _finish(self, spec, init, result, timed_out, bad_tools, exit_code, stream_path) -> RunResult:
         charged_full = False
-        if bad_tools:
+        if bad_tools == "probe":
+            outcome = "probe"
+        elif bad_tools:
             outcome = "bad_tools"
         elif result is None:
             outcome = "timeout" if timed_out else "no_result"
