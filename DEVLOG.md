@@ -3,7 +3,7 @@
 One entry per milestone: what changed, what it cost. Costs are paid runs made by the tool (the ledger);
 Claude Code's own development session is billed separately and doesn't count.
 
-## M0 Scaffold — offline part done, live checks awaiting approval (2026-11-08)
+## M0 Scaffold — done; the long-prompt cost still needs comparing with the Console (2026-11-08)
 
 What changed:
 - Repo layout, `pyproject.toml` (entry point `wiki`, extra `convert`), `NOTICE` (MIT, claude-quickstarts).
@@ -84,6 +84,28 @@ The owner approved replacing `--bare` with `--restricted --strict-mcp-config --d
 - Tests: argv defaults, the private config dir and environment, extra MCP servers and plugins failing a run
   (fake claude `extras` mode), and the canary check offline.
 
+### Second live smoke, restricted mode (2026-11-08, Claude Code 2.1.319, Haiku)
+
+Every check passed (`runs/smoke-20261108T082414Z/report.json`):
+- Key: `apiKeySource: ANTHROPIC_API_KEY`.
+- Reader init: Glob, Grep, Read. Writer init: Edit, Glob, Grep, Read, Write. There were no MCP servers or skills, and
+  the only plugins were built-in ones (agents-md, privacy, plugin-authoring). EndConversation isn't listed in this version.
+- Grep found the marker in an `--add-dir` folder (file and line).
+- A reader asked to read a file outside its folders answered DENIED, with 1 permission denial.
+- Canary: with a CLAUDE.md and an AGENTS.md above the run folder, the model answered NONE, so
+  `CLAUDE_CODE_DISABLE_CLAUDE_MDS` works, and the agents-md plugin loads nothing either.
+- Long prompt: 174,400 prompt tokens. Claude Code's estimate was $0.1073, the same as our list price at Haiku's long-prompt
+  rates ($0.1073), so Claude Code already applies the long-prompt price. The owner still needs to compare it with the
+  Console (session `c3556352-6a6a-42c4-bede-ee6ca79afd88`).
+- The private config folder holds only Claude Code's own state (no key: checked for `sk-ant` and
+  `customApiKeyResponses`).
+
+Found and fixed: concurrent eval runs raced rewriting the read-only grader prompt (flaky `PermissionError`).
+`write_prompt` now writes once, atomically, under a lock.
+
+M0 cost: $0.21 (ledger) of the $1 allowance. Three smoke commands (16 runs): $0.10 of it is the charge for one run that
+never returned a result, and $0.11 is real spend.
+
 ## M1 Offline pipeline — done (2026-11-08)
 
 What changed:
@@ -149,4 +171,4 @@ Tests: ask in each mode (working folders and added folders per SPEC's table, eva
 the trap refused, eval end to end and its scoring, question-file validation, dream accept / discard /
 fewer than 5 transcripts / a dream that changes a fact line is refused.
 
-Cost: $0.00. Total spent so far: $0.00 of $50.
+Cost: $0.00. Total spent so far: $0.21 of $50 (all M0).
