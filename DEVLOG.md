@@ -31,6 +31,20 @@ added folder, readers are denied a read outside their folders, and the estimated
 
 Cost: $0.00 (no paid runs).
 
+### First live smoke (approved; 2026-11-08, Claude Code 2.1.319, Haiku)
+
+- The key works in bare mode: `system/init` reports `apiKeySource: ANTHROPIC_API_KEY`, model `claude-haiku-5-5`.
+- Tools don't match: `--tools Read,Write,Edit,Glob,Grep` started only `["Edit","Read"]`, and
+  `--tools Read,Glob,Grep` only `["Read"]`. `Write`, `Glob` and `Grep` were dropped silently, with nothing on stderr. The
+  runner killed all four runs at init, as designed (`bad_tools`), so the Grep, denial and long-prompt checks
+  never ran. No role gained a tool, so nothing unsafe happened, but without Glob/Grep the readers can't search, and the
+  writers can't create files without Write.
+- Reported cost $0.00 for every run that returned a result; the Grep run returned no result event, so the ledger charged its
+  full share ($0.10). Real API usage was probably about zero.
+- Open: why 2.1.319 drops these tools. The changelog for 2.1.309–2.1.319 says nothing about it. M0 waits on the owner.
+
+Cost so far: $0.10 (ledger) of the $1 allowance.
+
 ## M1 Offline pipeline — done (2026-11-08)
 
 What changed:
