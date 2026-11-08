@@ -155,6 +155,29 @@ class Context:
     def commit(self, message: str) -> bool:
         return gitops.commit_all(self.base_repo, message)
 
+    def rebalance(self) -> None:
+        """Split what is left of the cap over the planned tasks not yet done, in proportion to their shares.
+
+        Shares come from estimates made before any run; when early phases cost less than estimated, later runs
+        would otherwise be held to budgets that are too small (and a budget stop is not retried).
+        """
+        if self.cap is None or not self.shares:
+            return
+        tasks = self.state.get("tasks", {})
+        todo = {k: v for k, v in self.shares.items() if tasks.get(k, {}).get("status") != "done"}
+        if not todo:
+            return
+        left = max(0.0, self.cap - self.spent_this_run())
+        # half of what is left, so every task can still afford its retry (a run with no result is charged in full);
+        # a share is only ever raised, never cut
+        new = cost_mod.share(todo, left / 2, float(self.cfg.runner("reserve", 0.10)),
+                             floor=float(self.cfg.runner("min_run_usd", 0.10)))
+        raised = {k: max(todo[k], new[k]) for k in todo}
+        if any(raised[k] > todo[k] * 1.0001 for k in todo):
+            self.shares.update(raised)
+            self.state["shares"] = self.shares
+            self.save_state()
+
     def spent_this_run(self) -> float:
         return sum(float(e.get("cost_usd") or 0) for e in self.ledger.entries() if e.get("run_id") == self.run_id)
 
@@ -295,6 +318,7 @@ def merge_into(repo: Path, wt: Path, changed: list[str]) -> None:
 
 def run_parallel(ctx: Context, tasks: list[WriterTask]) -> dict[str, TaskOutcome]:
     results: dict[str, TaskOutcome] = {}
+    ctx.rebalance()
     todo = [t for t in tasks if ctx.task_state(t.task_id).get("status") != "done"]
     for t in tasks:
         if t not in todo:

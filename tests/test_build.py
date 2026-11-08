@@ -253,3 +253,13 @@ def test_resumed_task_is_told_why_it_failed(loaded, monkeypatch):
     assert build(loaded, resume=True) == 0
     argv = json.loads(next(loaded.runs.glob(f"build-*/{failed_id}.cmd.json")).read_text())["argv"]
     assert "previous attempt was rejected" in argv[argv.index("-p") + 1]
+
+
+def test_unspent_cap_moves_to_unfinished_tasks(ws):
+    from wiki.phases import Context
+
+    ctx = Context(ws, "build", "build-x", ws.repo, shares={"extract-b01": 4.0, "link": 0.5, "index": 0.5}, cap=10.0)
+    ctx.state = {"tasks": {"extract-b01": {"status": "done"}}}
+    ctx.rebalance()  # nothing spent on the ledger for build-x: half of 10 * 0.9 for link and index
+    assert ctx.shares["link"] == pytest.approx(2.25) and ctx.shares["index"] == pytest.approx(2.25)
+    assert ctx.shares["extract-b01"] == 4.0

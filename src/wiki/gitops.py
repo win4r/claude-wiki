@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import threading
 from pathlib import Path
 
 from . import WikiError
@@ -66,13 +67,18 @@ def changed_paths(worktree: Path) -> list[str]:
     return sorted(set(paths))
 
 
+# git's worktree bookkeeping (.git/worktrees) is not safe against concurrent add/remove/prune: serialize them
+_WORKTREE_LOCK = threading.Lock()
+
+
 def worktree_add(repo: Path, path: Path, ref: str = "HEAD", branch: str | None = None) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    if branch:
-        git(repo, "worktree", "add", "-q", "-b", branch, str(path), ref)
-    else:
-        git(repo, "worktree", "add", "-q", "--detach", str(path), ref)
+    with _WORKTREE_LOCK:
+        if branch:
+            git(repo, "worktree", "add", "-q", "-b", branch, str(path), ref)
+        else:
+            git(repo, "worktree", "add", "-q", "--detach", str(path), ref)
     return path
 
 
@@ -82,12 +88,13 @@ def worktree_remove(repo: Path, path: Path) -> None:
     path = Path(path)
     if path.exists():
         make_writable(path)
-    git(repo, "worktree", "remove", "--force", str(path), check=False)
-    if path.exists():
-        import shutil
+    with _WORKTREE_LOCK:
+        git(repo, "worktree", "remove", "--force", str(path), check=False)
+        if path.exists():
+            import shutil
 
-        shutil.rmtree(path, ignore_errors=True)
-    git(repo, "worktree", "prune", check=False)
+            shutil.rmtree(path, ignore_errors=True)
+        git(repo, "worktree", "prune", check=False)
 
 
 def show(repo: Path, ref: str, path: str) -> str | None:
