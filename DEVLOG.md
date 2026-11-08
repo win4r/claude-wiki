@@ -231,7 +231,7 @@ Follow-ups (done after M4, before M5; prompts untested until the next paid run):
 
 Cost: $0.10 (allowance $4). Total spent so far: $1.54 of $50.
 
-## M5 Acceptance build — build done, eval awaiting approval (2026-11-08)
+## M5 Acceptance build — build and first eval done; second eval awaiting approval (2026-11-08)
 
 The core-tier build is paid for and checked; the core-tier eval has not run yet.
 - Build: filed every unit, with no ownership violations (the 25 `violations.txt` files are all format
@@ -249,9 +249,22 @@ The core-tier build is paid for and checked; the core-tier eval has not run yet.
 - `wiki check` on the core wiki: 0 errors, 173 warnings (missing link targets), 25 notes.
 - The core workspace's ledger total is set to $48.46, the $50 less what the other workspaces spent.
 
-Still to do: the core-tier eval (estimate $1.20, cap $3), then check the eval criteria.
+- First core-tier eval (approved; estimate $1.20, cap $3, spent **$0.40**; report
+  `repo/eval/report-core-tier-20261108T151422Z.md`): wiki 78% (32/41), sources 80%, both 76%. The trap was
+  refused in every mode. Median cost: wiki $0.0030, sources $0.0032, both $0.0038.
+  - 4 answers were ungraded because the grader corrected itself and printed a second JSON object. Fixed:
+    the last valid object wins, and the grader prompt asks for one object. Re-parsing the saved grader
+    output with no new spend gives wiki 88% (36/41), sources 80%, both 90%. The committed report stays as
+    it was run.
+  - Wiki and both answers cited 8 ids outside the manifest: `_schema.md`, entity slugs, exhibit names and
+    "a via b" forms. The prompts already forbade slugs. Fixed in the program: an answer citing ids
+    outside the manifest is asked again once, with each bad id explained (an entity page's units come
+    from its Sources table). Both runs' cost is counted, and the report counts these retries.
 
-Cost so far: $11.44 (allowance $28). Total spent so far: $12.98 of $50.
+Still to do: a second core-tier eval (paid, awaiting approval) for the clean report and the citation
+criterion.
+
+Cost so far: $11.83 (allowance $28). Total spent so far: $13.37 of $50.
 
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
