@@ -43,7 +43,7 @@ dream_usd = 3.0
 eval_usd = 3.0
 
 [runner]
-min_claude_version = "2.1.302"
+min_claude_version = "2.1.319"
 concurrency = 4
 batch_chars = 120000
 resolve_limit = 10

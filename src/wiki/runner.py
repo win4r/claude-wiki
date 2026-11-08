@@ -1,4 +1,10 @@
-"""The only module that starts `claude`. One headless, bare-mode run per task.
+"""The only module that starts `claude`. One headless, restricted-mode run per task.
+
+Claude Code 2.1.319's `--bare` mode has a fixed tool set (Bash, Edit, Read) that `--tools` can only narrow, so
+runs use `--restricted --strict-mcp-config --disable-slash-commands` instead (owner-approved change from SPEC,
+2026-11-08). What bare mode skipped is turned off here: a private, empty CLAUDE_CONFIG_DIR per workspace (no user
+settings, plugins, hooks or login to fall back on), CLAUDE.md and auto-memory disabled by environment, and the
+system/init event checked for MCP servers, skills and non-built-in plugins.
 
 Every run: checked tools, a saved stream, a ledger line (even on failure), a timeout that sends SIGINT then
 SIGTERM, and at most `concurrency` processes at once.
@@ -38,7 +44,11 @@ ALWAYS_PRESENT = {"EndConversation"}  # --tools cannot remove it
 NOT_RETRYABLE = {"success", "error_max_turns", "error_max_budget_usd", "bad_tools", "probe"}
 # Environment passed to claude; nothing else from os.environ reaches the process.
 ENV_PASS = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TERM",
-            "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR", "SHELL")
+            "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "SHELL")
+# Set on every run, whatever the caller's environment says.
+ENV_SET = {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+           "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+RESTRICTED_FLAGS = ["--restricted", "--strict-mcp-config", "--disable-slash-commands"]
 SIGINT_GRACE_S = 15.0
 SIGTERM_GRACE_S = 10.0
 
@@ -70,7 +80,7 @@ class RunSpec:
     input_chars: int | None = None
     # diagnostics only (wiki smoke --probe-tools); the defaults are what every real run uses
     tools_override: str | None = None
-    bare: bool = True
+    bare: bool = False  # probes only: Claude Code's --bare mode instead of RESTRICTED_FLAGS
     permission_mode: str | None = None
     permission_prompts: bool = True
     stop_at_init: bool = False
@@ -144,6 +154,23 @@ def tools_ok(role: str, tools: list | None) -> bool:
     return set(tools) - ALWAYS_PRESENT == set(ROLE_TOOLS[role])
 
 
+def init_problems(role: str, init: dict | None) -> list[str]:
+    """What is wrong with a system/init event for this role: tools, MCP servers, skills, non-built-in plugins."""
+    if not init:
+        return ["no system/init event"]
+    problems = []
+    if not tools_ok(role, init.get("tools")):
+        problems.append(f"tools {init.get('tools')} are not {list(ROLE_TOOLS[role])} (plus EndConversation)")
+    if init.get("mcp_servers"):
+        problems.append(f"MCP servers {init.get('mcp_servers')}")
+    if init.get("skills"):
+        problems.append(f"skills {init.get('skills')}")
+    extra = [pl.get("name") for pl in init.get("plugins") or [] if not isinstance(pl, dict) or pl.get("path") != "builtin"]
+    if extra:
+        problems.append(f"plugins {extra}")
+    return problems
+
+
 class Runner:
     def __init__(self, workspace, config, ledger: Ledger | None = None, concurrency: int | None = None):
         self.ws = workspace
@@ -166,7 +193,7 @@ class Runner:
     def check_version(self) -> str:
         if self._version_checked:
             return ""
-        want = parse_version(self.config.runner("min_claude_version", "2.1.302"))
+        want = parse_version(self.config.runner("min_claude_version", "2.1.319"))
         try:
             proc = subprocess.run([claude_bin(), "--version"], capture_output=True, text=True, timeout=60,
                                   env=self._env())
@@ -182,15 +209,19 @@ class Runner:
         return proc.stdout.strip()
 
     def _env(self) -> dict:
+        from .workspace import private_dir
+
         env = {k: os.environ[k] for k in ENV_PASS if k in os.environ}
         env.update({k: v for k, v in os.environ.items() if k.startswith("WIKI_FAKE_")})
+        env.update(ENV_SET)
+        env["CLAUDE_CONFIG_DIR"] = str(private_dir(Path(self.ws.runs) / ".claude-config"))
         return env
 
     # --- the command line
     def argv(self, spec: RunSpec) -> list[str]:
         mode = spec.permission_mode or ("acceptEdits" if spec.role in WRITER_ROLES else "dontAsk")
         tools = spec.tools_override if spec.tools_override is not None else ",".join(ROLE_TOOLS[spec.role])
-        cmd = [claude_bin()] + (["--bare"] if spec.bare else []) + [
+        cmd = [claude_bin()] + (["--bare"] if spec.bare else list(RESTRICTED_FLAGS)) + [
             "-p", spec.task,
             "--model", spec.model,
             "--append-system-prompt-file", str(spec.system_prompt_file),
@@ -274,7 +305,7 @@ class Runner:
                     if spec.stop_at_init:
                         probed = True
                         threading.Thread(target=stop, args=("probe",), daemon=True).start()
-                    elif spec.check_tools and not tools_ok(spec.role, ev.get("tools")):
+                    elif spec.check_tools and init_problems(spec.role, ev):
                         bad_tools = True
                         threading.Thread(target=stop, args=("bad_tools",), daemon=True).start()
                 elif ev.get("type") == "result":
@@ -314,7 +345,8 @@ class Runner:
             session_id=(result or init or {}).get("session_id"),
             turns=(result or {}).get("num_turns"),
             text=(result or {}).get("result") or "",
-            errors=list((result or {}).get("errors") or []),
+            errors=(init_problems(spec.role, init) if outcome == "bad_tools" else [])
+            + list((result or {}).get("errors") or []),
             permission_denials=list((result or {}).get("permission_denials") or []),
             init_tools=(init or {}).get("tools"),
             usage=usage,
@@ -328,6 +360,7 @@ class Runner:
             charged_full_cap=True if charged_full else None, turns=rr.turns,
             exit_code=exit_code, run_id=Path(spec.run_dir).name,
             permission_denials=len(rr.permission_denials) or None,
+            init_problems=(rr.errors[:4] if outcome == "bad_tools" else None),
             **usage,
         )
         return rr

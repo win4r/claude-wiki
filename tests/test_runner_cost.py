@@ -87,7 +87,7 @@ def spec(ws, tmp_path, role="ask", task="Ask: what?", **kw):
 def test_command_line(ws, tmp_path):
     r = Runner(ws, ws.config())
     writer = r.argv(spec(ws, tmp_path, role="extract", add_dirs=[tmp_path / "in"]))
-    assert writer[1:3] == ["--bare", "-p"]
+    assert writer[1:5] == ["--restricted", "--strict-mcp-config", "--disable-slash-commands", "-p"]
     for flag, value in [("--tools", "Read,Write,Edit,Glob,Grep"), ("--permission-mode", "acceptEdits"),
                         ("--permission-prompts", "none"), ("--add-dir", str(tmp_path / "in")),
                         ("--max-budget-usd", "0.2500"), ("--max-turns", "5"), ("--output-format", "stream-json"),
@@ -159,7 +159,7 @@ def test_timeout_sends_sigint(ws, tmp_path, monkeypatch):
 
 def test_version_and_key_checks(ws, monkeypatch):
     monkeypatch.setenv("WIKI_FAKE_VERSION", "2.1.100 (Claude Code)")
-    with pytest.raises(WikiError, match="2.1.302 or later"):
+    with pytest.raises(WikiError, match="2.1.319 or later"):
         Runner(ws, ws.config()).check_version()
     monkeypatch.delenv("WIKI_FAKE_VERSION")
     monkeypatch.delenv("ANTHROPIC_API_KEY")

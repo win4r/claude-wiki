@@ -98,7 +98,8 @@ def test_smoke_runs_offline(ws, capsys):
     assert main(["-w", str(ws.root), "smoke", "--estimate"]) == 0
     assert main(["-w", str(ws.root), "smoke", "--no-long-prompt"]) == 0
     report = json.loads(sorted(ws.runs.glob("smoke-*/report.json"))[-1].read_text())
-    assert report["checks"]["reader_init_tools"]["ok"] and report["checks"]["writer_init_tools"]["ok"]
+    assert report["checks"]["reader_init"]["ok"] and report["checks"]["writer_init"]["ok"]
+    assert report["checks"]["no_claude_md"]["ok"] and report["checks"]["key_works"]["ok"]
 
 
 def test_no_role_gets_bash_or_web():
@@ -151,6 +152,33 @@ def test_real_runs_keep_the_default_flags(ws):
     argv = r.argv(RunSpec(command="x", phase="x", role="extract", task_id="t", run_dir=ws.runs, cwd=ws.root,
                           task="t", system_prompt_file=ws.root / "p", model="haiku", budget_usd=1, turns=1,
                           timeout_s=1))
-    assert argv[1] == "--bare" and "--restricted" not in argv
+    assert argv[1:4] == ["--restricted", "--strict-mcp-config", "--disable-slash-commands"]
+    assert "--bare" not in argv
     assert argv[argv.index("--tools") + 1] == "Read,Write,Edit,Glob,Grep"
     assert argv[argv.index("--permission-mode") + 1] == "acceptEdits" and "--permission-prompts" in argv
+
+
+def test_runs_get_a_private_config_and_no_memory(ws, monkeypatch):
+    from wiki.runner import Runner
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/Users/someone/.claude")
+    monkeypatch.setenv("CLAUDE_CODE_DISABLE_CLAUDE_MDS", "0")
+    env = Runner(ws, ws.config())._env()
+    assert env["CLAUDE_CONFIG_DIR"] == str(ws.runs / ".claude-config")
+    assert oct(os.stat(env["CLAUDE_CONFIG_DIR"]).st_mode & 0o777) == "0o700"
+    assert env["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] == "1" and env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
+
+
+def test_init_with_mcp_servers_or_user_plugins_fails(ws, monkeypatch):
+    from wiki.runner import Runner, RunSpec, init_problems
+
+    assert init_problems("ask", {"tools": ["Read", "Glob", "Grep"], "plugins": [{"name": "x", "path": "builtin"}]}) == []
+    assert init_problems("ask", {"tools": ["Read"], "skills": ["s"]})
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "extras")
+    r = Runner(ws, ws.config())
+    p = ws.runs / "p.md"
+    p.write_text("x")
+    res = r.run(RunSpec(command="smoke", phase="smoke", role="ask", task_id="t", run_dir=ws.runs / "x", cwd=ws.root,
+                        task="t", system_prompt_file=p, model="haiku", budget_usd=0.01, turns=1, timeout_s=30))
+    assert res.outcome == "bad_tools"
+    assert any("MCP servers" in e for e in res.errors) and any("user-plugin" in e for e in res.errors)

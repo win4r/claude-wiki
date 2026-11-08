@@ -2,7 +2,7 @@
 
 It reads its task, writes canned files into its working directory, and emits stream-json with a made-up cost.
 It can misbehave on purpose: WIKI_FAKE_MISBEHAVE="<mode>[:<role>[:<times>]]" with mode one of
-outside, markers, input, fail, noresult, overcap, maxturns, badtools, hang, lifecycle; <role> may be
+outside, markers, input, fail, noresult, overcap, maxturns, badtools, extras, hang, lifecycle; <role> may be
 <role>@<text> to pick only runs whose task contains <text>. WIKI_FAKE_STATE is a folder for
 counters; WIKI_FAKE_COST the cost each run reports.
 
@@ -360,9 +360,14 @@ def main():
     tools = [t for t in a["tools"].split(",") if t] + ["EndConversation"]
     if mode == "badtools":
         tools.append("Bash")
-    emit({"type": "system", "subtype": "init", "session_id": sid, "tools": tools, "model": a["model"],
-          "cwd": str(cwd), "permissionMode": "acceptEdits"})
-    if mode == "badtools":
+    init = {"type": "system", "subtype": "init", "session_id": sid, "tools": tools, "model": a["model"],
+            "cwd": str(cwd), "permissionMode": "acceptEdits", "mcp_servers": [], "skills": [],
+            "plugins": [{"name": "cc-plugin-privacy", "path": "builtin"}], "apiKeySource": "ANTHROPIC_API_KEY"}
+    if mode == "extras":
+        init["mcp_servers"] = [{"name": "stray", "status": "connected"}]
+        init["plugins"].append({"name": "user-plugin", "path": "/somewhere"})
+    emit(init)
+    if mode in ("badtools", "extras"):
         time.sleep(5)  # the runner should stop us
     if mode == "hang":
         signal.signal(signal.SIGINT, lambda *_: sys.exit(130))

@@ -2,12 +2,12 @@
 
 `wiki` has Claude Code build a Markdown knowledge wiki in a git repo from a folder of documents, answer
 questions from it with a source tag on every fact, and keep it correct with reviewed dreaming passes. Every
-agent step is one headless, bare-mode `claude -p` run in its own git worktree; the program checks what each
+agent step is one headless, restricted-mode `claude -p` run in its own git worktree; the program checks what each
 run changed and records what it cost in a ledger. SPEC.md is the full design; DEVLOG.md says where things stand.
 
 ## Setup
 
-Requirements: Python 3.11 or later, git, and Claude Code 2.1.302 or later (`claude --version`).
+Requirements: Python 3.11 or later, git, and Claude Code 2.1.319 or later (`claude --version`).
 
 ```bash
 pip install -e '.[convert]'
@@ -18,7 +18,11 @@ text-layer PDF files. Plain text, Markdown, HTML, CSV and email need nothing ext
 
 ### The API key and the Console spend limit
 
-Paid runs use bare mode, which never reads your Claude login: they need an API key.
+Paid runs need an API key. Each run uses `claude --restricted --strict-mcp-config --disable-slash-commands`
+with a private, empty `CLAUDE_CONFIG_DIR` (`runs/.claude-config`), so your Claude login, settings, plugins, hooks,
+MCP servers and auto memory never load, and CLAUDE.md files are switched off. (SPEC asks for `--bare`, but Claude
+Code 2.1.319's bare mode only offers Bash, Edit and Read, so the owner approved this change on 2026-11-08; see
+DEVLOG.md.)
 
 1. In the Claude Console, create a workspace for this tool and **set its spend limit to $50**. The tool's own
    caps rely on Claude Code's client-side cost estimates, which can differ from the bill (for example, Haiku 5.5
@@ -62,7 +66,7 @@ exits with a message (exit code 75).
 | `wiki eval <file>` | Asks every question in every mode (`--modes` to narrow), grades each answer on Sonnet against its criteria, and writes `repo/eval/report-*.md` and `.json`: score and cost per mode, traps refused, and the break-even point | Yes |
 | `wiki cost` | The ledger: spent, remaining, spend by command and phase | No |
 | `wiki status` | Units by status, pages by kind, the last build and dream, any open review branch | No |
-| `wiki smoke` | M0's live checks of Claude Code (bare-mode key, init tools, Grep in an added folder, denied reads, a long-prompt cost) | Yes, about $0.35 |
+| `wiki smoke` | M0's live checks of Claude Code (the key, init tools and plugins, Grep in an added folder, denied reads, no CLAUDE.md, a long-prompt cost). `--probe-tools` shows which tools each flag set starts | Yes, about $0.35 ($0.10 for the probe) |
 
 Paid commands share `--estimate` (print the estimate and exit), `--max-usd <n>` (lower the command's cap),
 `--model <alias>`, `--concurrency <n>` (default 4) and `--approve-over-cap` (the owner approves, once, an
@@ -115,8 +119,8 @@ Whether to install it is your call.
 - A writing run works in its own worktree and may change only the paths it owns; anything else fails the run
   and discards the worktree. Inputs are read-only copies, re-hashed after every run and phase; `_schema.md` is
   verified unchanged after every phase.
-- No role gets Bash, web or MCP tools; the runner fails any run whose `system/init` lists more than its role's
-  tools plus `EndConversation`.
+- No role gets Bash, web or MCP tools; the runner fails any run whose `system/init` lists other tools than its
+  role's (plus `EndConversation`), any MCP server or skill, or a plugin that isn't built in.
 
 ## Development
 

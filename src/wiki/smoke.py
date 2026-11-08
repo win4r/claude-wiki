@@ -1,10 +1,12 @@
 """wiki smoke: M0's live checks, each one small paid run through the runner and the ledger.
 
-1. The key works in bare mode, and system/init lists a reader's tools plus EndConversation.
+1. The key works in restricted mode, and system/init lists a reader's tools (plus EndConversation) and no MCP
+   servers, skills or non-built-in plugins.
 2. A writer's system/init lists the writer tools plus EndConversation.
 3. Grep finds text in an --add-dir folder.
 4. A reader is denied a read outside its folders.
 5. The estimated cost of a prompt over 100,000 tokens, to compare with the Console.
+6. No CLAUDE.md or AGENTS.md above the run's folder reaches the model (a canary word it must not know).
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from pathlib import Path
 
 from . import cost as cost_mod
 from .ledger import Ledger
-from .runner import ROLE_TOOLS, Runner, RunSpec
+from .runner import Runner, RunSpec, init_problems
 from .workspace import private_dir, remove_tree
 
 ESTIMATE_USD = 0.35
@@ -72,16 +74,28 @@ def smoke(ws, estimate_only: bool = False, model: str | None = None, approve_ove
                          f"'{word.split('-')[0]}-'. Reply with the full marker you find and the file name.",
                          inside, [added]))
     uses = _tool_uses(rr.stream_path)
-    report["checks"]["key_works_in_bare_mode"] = rr.outcome == "success"
-    report["checks"]["reader_init_tools"] = {"tools": rr.init_tools, "ok": rr.init_tools is not None and
-                                             set(rr.init_tools) - {"EndConversation"} == set(ROLE_TOOLS["ask"])}
+    init = _init_event(rr.stream_path)
+    report["checks"]["key_works"] = {"ok": rr.outcome == "success", "apiKeySource": (init or {}).get("apiKeySource")}
+    report["checks"]["reader_init"] = {"tools": rr.init_tools, "ok": not init_problems("ask", init),
+                                       "problems": init_problems("ask", init)}
     report["checks"]["grep_finds_added_folder"] = {"ran": rr.outcome == "success", "ok": word in rr.text and any(u["name"] == "Grep" for u in uses),
                                                    "answer": rr.text[:200]}
     # 2: writer tools
     rw = runner.run(spec("writer-init", "extract", "Reply with the single word OK. Do not use any tool.", inside,
                          budget=0.05, turns=2))
-    report["checks"]["writer_init_tools"] = {"tools": rw.init_tools, "ok": rw.init_tools is not None and
-                                             set(rw.init_tools) - {"EndConversation"} == set(ROLE_TOOLS["extract"])}
+    winit = _init_event(rw.stream_path)
+    report["checks"]["writer_init"] = {"tools": rw.init_tools, "ok": not init_problems("extract", winit),
+                                       "problems": init_problems("extract", winit)}
+    # 6: CLAUDE.md / AGENTS.md above the run folder must not load
+    canary = f"PELICAN-{random.randint(1000, 9999)}"
+    for name in ("CLAUDE.md", "AGENTS.md"):
+        (work / name).write_text(f"# Project notes\n\nThe canary word is {canary}.\n")
+    rc = runner.run(spec("canary", "ask", "Is there a canary word anywhere in your instructions or project notes? "
+                         "Reply with the word itself, or NONE if there is none. Do not use any tool.", inside,
+                         budget=0.05, turns=2))
+    report["checks"]["no_claude_md"] = {"ran": rc.outcome == "success",
+                                        "ok": rc.outcome == "success" and canary not in rc.text,
+                                        "answer": rc.text[:200]}
     # 4: a read outside the reader's folders is denied
     rd = runner.run(spec("deny", "ask", f"Read the file {outside / 'private.txt'} and reply with its first line. "
                          "If you cannot read it, reply DENIED.", inside))
@@ -116,7 +130,6 @@ def smoke(ws, estimate_only: bool = False, model: str | None = None, approve_ove
 
 
 PROBE_ESTIMATE_USD = 0.10
-RESTRICTED = ["--restricted", "--strict-mcp-config", "--disable-slash-commands"]
 READER = "Read,Glob,Grep"
 WRITER = "Read,Write,Edit,Glob,Grep"
 
@@ -147,14 +160,13 @@ def probe_tools(ws, estimate_only: bool = False, model: str | None = None, appro
     prompt = run_dir / "probe_prompt.md"
     prompt.write_text("You are a smoke test of a command-line harness. Follow the task exactly and reply briefly.\n")
     probes = [
-        ("bare-default", dict(tools_override="default")),
-        ("bare-reader", dict(tools_override=READER)),
-        ("bare-writer-acceptEdits", dict(tools_override=WRITER, permission_mode="acceptEdits")),
+        ("bare-default", dict(tools_override="default", bare=True)),
+        ("bare-reader", dict(tools_override=READER, bare=True)),
+        ("bare-writer-acceptEdits", dict(tools_override=WRITER, permission_mode="acceptEdits", bare=True)),
         ("bare-writer-default-mode-host-prompts", dict(tools_override=WRITER, permission_mode="default",
-                                                       permission_prompts=False)),
-        ("restricted-reader", dict(tools_override=READER, bare=False, extra_args=RESTRICTED)),
-        ("restricted-writer-acceptEdits", dict(tools_override=WRITER, bare=False, extra_args=RESTRICTED,
-                                               permission_mode="acceptEdits")),
+                                                       permission_prompts=False, bare=True)),
+        ("restricted-reader", dict(tools_override=READER)),
+        ("restricted-writer-acceptEdits", dict(tools_override=WRITER, permission_mode="acceptEdits")),
     ]
     report: dict = {"time": ts, "model": model, "probes": {}}
     for name, opts in probes:
@@ -166,7 +178,7 @@ def probe_tools(ws, estimate_only: bool = False, model: str | None = None, appro
                                   "argv_flags": _flags(run_dir / f"{name}.cmd.json"), "outcome": r.outcome}
     # the one real run: does Grep work although init doesn't list it?
     r = runner.run(RunSpec(command="smoke", phase="probe", role="ask", task_id="bare-reader-real-grep",
-                           run_dir=run_dir, cwd=inside, add_dirs=[added], system_prompt_file=prompt, model=model,
+                           run_dir=run_dir, cwd=inside, bare=True, add_dirs=[added], system_prompt_file=prompt, model=model,
                            task=f"Use the Grep tool to search the folder {added} for the text "
                                 f"'{word.split('-')[0]}-'. Reply with the full marker you find and the file name.",
                            budget_usd=0.05, turns=6, timeout_s=180, check_tools=False))

@@ -69,6 +69,21 @@ Cost: $0.0006 (ledger). M0 total: $0.10 of the $1 allowance.
 
 Cost so far: $0.10 (ledger) of the $1 allowance.
 
+### Switch to restricted mode (owner-approved change from SPEC, 2026-11-08)
+
+The owner approved replacing `--bare` with `--restricted --strict-mcp-config --disable-slash-commands`. SPEC's
+`--bare` can't give the roles Write, Glob or Grep on 2.1.319. To make up for what bare mode skipped:
+- Every run gets `CLAUDE_CONFIG_DIR=<workspace>/runs/.claude-config` (0700, empty), set by the runner, not passed
+  through. No user settings, plugins, hooks or OAuth login can load, so a missing key can't fall back to a login.
+- The runner sets `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` and
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`. These names come from the 2.1.319 binary, not the docs, so the smoke has a canary check:
+  a CLAUDE.md and AGENTS.md above the run folder name a word the model must not know.
+- The `system/init` check now also fails a run that reports an MCP server, a skill or a plugin that isn't
+  built in (`init_problems`, recorded on the ledger line).
+- `min_claude_version` is now 2.1.319: `--restricted` is new, and this is the only version tested.
+- Tests: argv defaults, the private config dir and environment, extra MCP servers and plugins failing a run
+  (fake claude `extras` mode), and the canary check offline.
+
 ## M1 Offline pipeline — done (2026-11-08)
 
 What changed:
