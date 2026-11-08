@@ -82,7 +82,7 @@ def ask(ws, question: str, mode: str = "both", estimate_only: bool = False, max_
     model = model or cfg.model("ask")
     est = cost_mod.estimate_question(ledger.averages(), mode, model)
     cap_limit = min(cfg.cap("question_usd"), max_usd) if max_usd else cfg.cap("question_usd")
-    print(f"Estimate for one question in {mode} mode on {model}: {cost_mod.usd(est)} (cap {cost_mod.usd(cap_limit)})")
+    print(f"Estimate for one question in {mode} mode on {model}: {cost_mod.usd_fine(est)} (cap {cost_mod.usd(cap_limit)})")
     if estimate_only:
         return 0
     if mode != "sources" and not (ws.wiki / "_index.md").exists():
@@ -104,5 +104,5 @@ def ask(ws, question: str, mode: str = "both", estimate_only: bool = False, max_
         print(f"Cited units, all in the manifest: {', '.join(rec['cited_units'])}")
     if rec["malformed_tags"]:
         print(f"WARNING: {len(rec['malformed_tags'])} malformed source tag(s)")
-    print(f"Cost {cost_mod.usd(rec['cost_usd'])}; transcript saved for dreaming: {run_dir / (task_id + '.json')}")
+    print(f"Cost {cost_mod.usd_fine(rec['cost_usd'])}; transcript saved for dreaming: {run_dir / (task_id + '.json')}")
     return 0 if rec["outcome"] == "success" else 2

@@ -12,7 +12,10 @@ its stem (`_index`, `README`{escalations_stem}) and a description.
   page and every unit in catalog.md must appear. Link only pages that exist.
 - README.md, under 40 lines: how to read this wiki (start at _index.md; a page's Current picture first, then
   search for the section you need; how source tags, valid_to, retracted and CONFLICT lines read; facts can lag
-  behind reality, so re-check a figure that matters against its source unit).
+  behind reality, so re-check a figure that matters against its source unit). Keep these points too: what each
+  per-unit folder holds (notes, addenda, contracts, relations, metrics, open_questions); that `_aliases.md` maps
+  every name to one slug; that figures the wiki computed are marked "computed"; and which units are synthetic.
+  When README.md already exists, edit it in place and keep every point it makes that is still true.
 {escalations_rules}
 Write facts only as they appear in catalog.md, each with its source tag; do not invent any.
 

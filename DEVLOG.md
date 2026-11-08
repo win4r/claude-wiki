@@ -223,7 +223,7 @@ Branch `dream/20261108T104218Z` held 6 findings: 1 WRONG, 3 MISS, 1 UNPLACED and
 matched the diff. The owner reviewed it and accepted it: merged `--no-ff` and tagged
 `dream-accepted-20261108T104218Z`. `wiki check` on main: 0 errors.
 
-Follow-ups noted, not yet done:
+Follow-ups (done after M4, before M5; prompts untested until the next paid run):
 - The index run rewrote `README.md` and dropped what the per-unit folders hold, how `_aliases.md` maps names, and the
   "computed" label. The index prompt should keep those points.
 - The ask prompts should require unit ids in `source:` tags (see M3).

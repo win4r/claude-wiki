@@ -182,3 +182,16 @@ def test_init_with_mcp_servers_or_user_plugins_fails(ws, monkeypatch):
                         task="t", system_prompt_file=p, model="haiku", budget_usd=0.01, turns=1, timeout_s=30))
     assert res.outcome == "bad_tools"
     assert any("MCP servers" in e for e in res.errors) and any("user-plugin" in e for e in res.errors)
+
+
+def test_ask_prompts_require_unit_ids_and_index_keeps_readme_points():
+    for name in ("ask_wiki", "ask_both"):
+        assert "never\nan entity page slug" in render(name), name
+    idx = render("index", escalations=True)
+    assert "_aliases.md` maps" in idx and '"computed"' in idx and "edit it in place" in idx
+
+
+def test_usd_fine():
+    from wiki.cost import usd_fine
+
+    assert usd_fine(0.0024) == "$0.0024" and usd_fine(0) == "$0.00" and usd_fine(1.5) == "$1.50"
