@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
 from . import tool_root
@@ -38,13 +39,19 @@ def render(role_file: str, steering: str = "", escalations: bool = False, resolv
     )
 
 
+_WRITE_LOCK = threading.Lock()
+
+
 def write_prompt(run_dir: Path, role_file: str, text: str) -> Path:
     folder = Path(run_dir) / "prompts"
     folder.mkdir(parents=True, exist_ok=True)
     os.chmod(folder, 0o700)
     path = folder / f"{role_file}.md"
-    if path.exists():
-        os.chmod(path, 0o600)
-    path.write_text(text)
-    os.chmod(path, 0o400)
+    with _WRITE_LOCK:  # concurrent runs share one prompt file: write it once, atomically, read-only
+        if path.exists() and path.read_text() == text:
+            return path
+        tmp = folder / f".{role_file}.{os.getpid()}.{threading.get_ident()}.tmp"
+        tmp.write_text(text)
+        os.chmod(tmp, 0o400)
+        os.replace(tmp, path)
     return path
