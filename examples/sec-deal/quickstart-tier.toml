@@ -1,0 +1,90 @@
+# Quickstart-tier question set: 8 questions drafted by Claude Code in M3 from the quickstart-tier documents
+# (5 lookups, 2 cross-document, 1 trap). Every criterion quotes its source unit in brackets.
+# Status: DRAFT, awaiting the owner's approval before the first eval run.
+# One point per criterion met.
+
+[[question]]
+id = "qs-tock"
+kind = "lookup"
+question = "What did Squarespace agree to sell in June 2024, to whom, and for how much?"
+criteria = [
+  "Says it agreed to sell Tock LLC, \"a wholly-owned subsidiary of the Company\" (all of its LLC interests) [8-k-20240621]",
+  "Names the buyer as \"American Express Travel Related Services Company, Inc.\" [8-k-20240621]",
+  "Gives the price as \"$400,000,000 in cash, subject to certain customary adjustments\" [8-k-20240621]",
+  "Dates the Securities Purchase Agreement to June 21, 2024 [8-k-20240621]",
+]
+
+[[question]]
+id = "qs-regulatory"
+kind = "lookup"
+question = "Which regulatory clearances for the Permira transaction do the filings report, and when?"
+criteria = [
+  "Says \"The waiting period has expired under the Hart-Scott-Rodino Antitrust Improvements Act of 1976\" [8-k-20240703]",
+  "Says \"Austrian merger control clearance was received on June 21, 2024\" [8-k-20240703]",
+  "Ties both to the 8-K dated July 3, 2024 (earliest event June 28, 2024) [8-k-20240703]",
+]
+
+[[question]]
+id = "qs-termination-fees"
+kind = "lookup"
+question = "What termination fees does the amended and restated merger agreement set, and who pays each?"
+criteria = [
+  "Gives the Company's fee to Parent as \"$210,493,094.39\" [8-k-20240909]",
+  "Gives a trigger for the Company's fee, such as terminating to accept a \"Superior Proposal\" or a \"Recommendation Change\" [8-k-20240909]",
+  "Gives Parent's fee to the Company as \"$245,575,276.79\" [8-k-20240909]",
+  "Ties both to the A&R Merger Agreement of September 9, 2024 [8-k-20240909]",
+]
+
+[[question]]
+id = "qs-closing-debt"
+kind = "lookup"
+question = "What debt did the buyer put in place at closing, and what happened to the company's existing credit facility?"
+criteria = [
+  "Names Blue Owl Capital Corporation as administrative agent of the new Credit and Guaranty Agreement [8-k-20241017]",
+  "Lists \"a term loan facility in an aggregate principal amount equal to $2,100,000,000\", a $300,000,000 delayed draw term loan and a $250,000,000 revolving facility [8-k-20241017]",
+  "Says Parent is the borrower and the Surviving Corporation a guarantor [8-k-20241017]",
+  "Says the Company Credit Agreement with JPMorgan Chase Bank, N.A. as agent \"was repaid in full\" and its commitments terminated [8-k-20241017]",
+]
+
+[[question]]
+id = "qs-directors"
+kind = "lookup"
+question = "Who were the company's directors when the merger closed, and what happened to them?"
+criteria = [
+  "Names all seven: \"Anthony Casalena, Andrew Braccia, Michael Fleisher, Jonathan Klein, Liza Landsman, Anton Levy and Neela Montgomery\" [8-k-20241017]",
+  "Says each \"resigned as directors of the Company\" at the Effective Time [8-k-20241017]",
+  "Dates it to the closing, October 17, 2024 [8-k-20241017]",
+]
+
+[[question]]
+id = "qs-ga-closing"
+kind = "cross-document"
+question = "What did General Atlantic do with its Squarespace shares at the closing, and does the company's 8-K describe it the same way as General Atlantic's own Form 4?"
+criteria = [
+  "Says GA contributed \"8,898,108 shares of Class A common stock\" to TopCo for newly issued TopCo equity [4-20241017-2596]",
+  "Says GA SQRS II sold \"1,712,965 shares of Class A common stock\" to TopCo \"at a price of $46.50 per share\" [4-20241017-2596]",
+  "Says GA SQRS II also sold \"4,958,345 shares of Class B common stock\" to TopCo [4-20241017-2596]",
+  "Gives the 8-K's account as a contribution of shares for equity, leaving General Atlantic owning \"approximately 8.4%\" indirectly [8-k-20240909]",
+  "Points out that the 8-Ks describe a contribution (rollover), not the cash sales to TopCo that the Form 4 reports",
+]
+
+[[question]]
+id = "qs-vendor-rows"
+kind = "cross-document"
+question = "The vendor data extract has several rows that look like Squarespace. Which of them are the company in the filings, which are not, and what FY2023 revenue do the matching rows give?"
+criteria = [
+  "Matches AlphaData AD-778812 (\"SQUARESPACE INC\", SQSP) and BetaFeed BF-10442 (\"Squarespace, Inc.\", SQSP.N) to Squarespace, Inc., the issuer in the filings (Class A, SQSP, New York) [data-provider-extract, 8-k-20241017]",
+  "Gives FY2023 revenue of about $1,012.3M from those rows [data-provider-extract]",
+  "Says BF-99120 \"Spaceship Purchaser, Inc.\" is the buyer (Parent), not the company [data-provider-extract, 8-k-20241017]",
+  "Says \"Block, Inc. (fka Square, Inc.)\" and \"Squarespace Technologies Ltd\" are unrelated near-miss names [data-provider-extract]",
+  "Treats the revenue as vendor data (rows marked SYNTHETIC) that no filing in the room confirms",
+]
+
+[[question]]
+id = "qs-trap-q2"
+kind = "trap"
+question = "What revenue did Squarespace report for the quarter ended June 30, 2024?"
+criteria = [
+  "Refuses: says the figure is not in the wiki or the documents and gives no Q2 2024 revenue figure",
+  "Names the missing document: the press release \"furnished as Exhibit 99.1\" to the August 2, 2024 8-K [8-k-20240802]",
+]

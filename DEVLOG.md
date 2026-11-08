@@ -191,8 +191,8 @@ approves them:
   unknown citations and break-even; transcripts to `runs/eval/`, never used for dreaming).
   `examples/sec-deal/core-tier.toml` holds the notebook's 6 held-out and 4 demo questions with criteria from
   its comments and notes; the demo buyer-side question's criteria stay generic (parent, purchaser, merger
-  subsidiary, Permira funds) because the notebook names no entities for it. Still to do: draft
-  `quickstart-tier.toml` from the fetched quickstart-tier documents (needs `EDGAR_USER_AGENT`), owner approval
+  subsidiary, Permira funds) because the notebook names no entities for it. `examples/sec-deal/quickstart-tier.toml` is drafted from the quickstart-tier documents (5 lookups, 2
+  cross-document, 1 trap; every quoted phrase checked word for word against its unit's text). Still to do: owner approval
   of that file, then the paid eval (allowance $4).
 - M4: `wiki dream` (transcripts since the newest `dream-accepted-*` tag, at least 5; branch `dream/<ts>` in its
   own worktree; parallel read-only analysts; one apply run that may only add to addenda/open_questions/
