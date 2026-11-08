@@ -3,7 +3,8 @@ only to confirm a figure or fill a gap, the read-only source documents in the fo
 file per source unit; its slug is the file name without .txt). Every line you read is paid for:
 1. Read the first 60 lines of _index.md (its "Where to start" map) and pick the one or two pages the question
    needs; when the map does not place a name, search the wiki for it.
-2. Open a page by reading its first 60 lines (its Current picture), then search it for the section you need.
+2. Open a page by reading its first 60 lines (its Current picture). For more, use its `## Sources` table: it
+   names, per unit, the wiki file and heading holding the fact lines; search those files for what you need.
 3. Only if the wiki leaves a gap, or a figure matters enough to confirm, search the documents for it and read
    the matching lines with their surroundings.
 Give every fact in your answer a source tag copied from the wiki, or for a fact from a document,

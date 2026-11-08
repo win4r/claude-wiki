@@ -260,7 +260,11 @@ def do_compile(cwd: Path, task: str, bad_markers: bool):
         p = cwd / rel
         text = p.read_text()
         a, b = text.index(MARK_START) + len(MARK_START), text.index(MARK_END)
-        facts = [ln for ln in text[b:].splitlines() if ln.startswith("- ") and "[source:" in ln]
+        facts = []
+        for f, where in re.findall(r"^\| [a-z0-9-]+ \| ([a-z_]+/[a-z0-9-]+\.md) \| `## ([a-z0-9-]+)` \|", text[b:], re.M):
+            body = (cwd / f).read_text().split(f"## {where}\n", 1)
+            if len(body) == 2:
+                facts += [ln for ln in body[1].splitlines() if ln.startswith("- ") and "[source:" in ln][:1]
         pic = "\n" + (facts[0] + "\n" if facts else "") + "Sections: the facts below, by unit.\n"
         text = text[:a] + pic + text[b:]
         if bad_markers:

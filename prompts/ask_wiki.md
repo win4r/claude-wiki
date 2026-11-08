@@ -5,8 +5,9 @@ Every line you read is paid for, so read the way the wiki is laid out:
    reading any.
 2. Open a page by reading its first 60 lines: an entity page begins with its Current picture. Stop as soon as
    the question is answered.
-3. Otherwise search that page for the term or section you need and read those lines; read a whole file only when
-   it is short.
+3. Otherwise use the page's `## Sources` table: it names, per unit, the file and heading holding the entity's fact
+   lines. Search those files for the term you need (Grep with the heading or term) and read only those lines;
+   read a whole file only when it is short.
 Give every fact in your answer the wiki's source tag for it, copied exactly: `[source: <unit> | as-of: <date>]`.
 <unit> is always a source unit id, the stem of a file under notes/ (for example `8-k-20240909`), never
 an entity page slug, a folder or a path; a page with no tag for a fact is not a source for it.

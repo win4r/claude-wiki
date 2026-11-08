@@ -148,9 +148,8 @@ def test_compile_splits_large_pages_and_drops_empty_slugs(tmp_path):
     w = write(tmp_path, files)
     res = compile_pages(w, {})
     main = (w / "entities" / "acme.md").read_text()
-    assert len(main.encode()) < 80_000 and "[[acme-facts-1]]" in main
-    facts = sorted((w / "entities").glob("acme-facts-*.md"))
-    assert len(facts) >= 2 and all(len(p.read_bytes()) <= 80_000 for p in facts)
+    assert len(main.encode()) < 5_000 and "| u1 | notes/u1.md | `## acme` | 700 |" in main  # pointers, not copies
+    assert not list((w / "entities").glob("acme-facts-*.md"))
     assert not (w / "entities" / "gone.md").exists() and "gone" in res.removed
     assert "acme" in res.needs_picture
     f = run_checks(w, manifest())

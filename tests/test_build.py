@@ -43,7 +43,7 @@ def test_fixture_build_passes_check(loaded):
         assert (ws.wiki / "notes" / f"{u}.md").exists()
     assert (ws.wiki / "escalations.md").exists()
     acme = (ws.wiki / "entities" / "acme.md").read_text()
-    assert "<!-- current-picture:start -->\n- " in acme and "## From alpha-8k" in acme and "## From beta-note" in acme
+    assert "<!-- current-picture:start -->\n- " in acme and "## Sources" in acme and "| alpha-8k | notes/alpha-8k.md |" in acme and "| beta-note |" in acme
     log = gitops.git(ws.repo, "log", "--format=%s").splitlines()
     for n, phase in enumerate(["convert", "batch", "extract", "check", "resolve", "link", "compile", "index"], 1):
         assert any(f"phase {n} {phase}" in s for s in log) or phase == "convert", (phase, log)

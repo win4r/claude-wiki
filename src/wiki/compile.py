@@ -28,7 +28,7 @@ class CompileResult:
 def collect(files: dict[str, str]) -> tuple[dict, dict]:
     """(slug -> {"row", "groups": {source path: [lines]}}, problems) from _aliases.md and the source layer."""
     rows, _ = parse_aliases(files.get("_aliases.md", ""))
-    by_slug = {r.slug: {"row": r, "groups": {}, "types": set()} for r in rows}
+    by_slug = {r.slug: {"row": r, "groups": {}, "types": set(), "where": []} for r in rows}
     headings = heading_map(files)
     for (unit, heading), rec in sorted(headings.items()):
         hits = [r.slug for r in rows if heading in r.proposed or f"{unit}#{heading}" in r.proposed]
@@ -42,6 +42,7 @@ def collect(files: dict[str, str]) -> tuple[dict, dict]:
                 if s.heading == heading and s.facts:
                     lines = entry["groups"].setdefault(unit, [])
                     lines.extend(x for x in s.facts if x not in lines)
+                    entry["where"].append((unit, path, f"`## {heading}`", len(s.facts)))
     for path, text in sorted(files.items()):
         if kind_of(path) != "relations":
             continue
@@ -52,6 +53,8 @@ def collect(files: dict[str, str]) -> tuple[dict, dict]:
                     lines = entry["groups"].setdefault(Path(path).stem, [])
                     if line.rstrip() not in lines:
                         lines.append(line.rstrip())
+                        entry["rel_counts"] = rc = entry.get("rel_counts", {})
+                        rc[path] = rc.get(path, 0) + 1
     return by_slug, {}
 
 
@@ -74,38 +77,13 @@ def render_page(slug: str, entry: dict, picture: str) -> tuple[str, dict[str, st
     picture = picture.strip("\n")
     head = (f"{fm}# {slug}\n\n{MARK_START}\n" + (picture + "\n" if picture else "") + f"{MARK_END}\n\n"
             "Compiled by wiki build from the source layer: change notes/, addenda/ or _aliases.md, not this page.\n")
-    sections = []
-    for unit in sorted(entry["groups"]):
-        sections.append(f"\n## From {unit}\n" + "\n".join(entry["groups"][unit]) + "\n")
-    full = head + "".join(sections)
-    if len(full.encode()) <= SPLIT_AT:
-        return full, {}
-    pages: list[list[str]] = [[]]
-    size = 0
-    for unit in sorted(entry["groups"]):
-        heading = f"\n## From {unit}\n"
-        open_heading = False
-        for line in entry["groups"][unit]:
-            n = len(line.encode()) + 1
-            if pages[-1] and size + n + len(heading) > FACTS_PAGE_TARGET:
-                pages.append([])
-                size = 0
-                open_heading = False
-            if not open_heading:
-                pages[-1].append(heading)
-                size += len(heading)
-                open_heading = True
-            pages[-1].append(line + "\n")
-            size += n
-    extra = {}
-    names = []
-    for i, secs in enumerate(pages, 1):
-        stem = f"{slug}-facts-{i}"
-        names.append(stem)
-        extra[stem] = frontmatter({"name": stem, "description": f"fact lines of {slug}, part {i} of {len(pages)}"}) + \
-            f"# {slug}: facts, part {i} of {len(pages)}\n\nBack to [[{slug}]].\n" + "".join(secs)
-    main = head + "\nThe fact lines are on " + ", ".join(f"[[{n}]]" for n in names) + ".\n"
-    return main, extra
+    rows_out = [f"| {u} | {path} | {where} | {n} |" for u, path, where, n in sorted(entry.get("where", []))]
+    rows_out += [f"| {Path(path).stem} | {path} | lines naming [[{slug}]] | {n} |"
+                 for path, n in sorted(entry.get("rel_counts", {}).items())]
+    sources = ("\n## Sources\n"
+               "The fact lines about this entity stay in the per-unit files; open a file and go to the heading:\n\n"
+               "| unit | file | where | facts |\n| --- | --- | --- | --- |\n" + "\n".join(rows_out) + "\n")
+    return head + sources, {}
 
 
 def compile_pages(wiki_dir: Path, known_sha: dict[str, str], only: set[str] | None = None) -> CompileResult:
