@@ -66,3 +66,34 @@ Found and fixed while testing: concurrent runs raced writing the shared prompt f
 run); one unit's facts over 80 KB stayed on a single fact page (now split by line).
 
 Cost: $0.00 (allowance $0).
+
+## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
+
+M2, M3 and M4 each end in paid runs, and M0's live checks come first, so these milestones are not done. Their
+code is written and tested offline against the fake claude, so the paid steps can start as soon as the owner
+approves them:
+- M2: the role prompts and the build are ready (see M1); the quickstart-tier build itself is paid
+  (allowance $8). After it: compare estimate and actual in the ledger (the estimator recalibrates itself from
+  ledger averages per phase and model) and tune turn limits.
+- M3: `wiki ask` in `wiki` / `sources` / `both` modes (one fresh read-only session, cited units checked against
+  the manifest, transcripts to `runs/ask/`), `wiki eval` (every question in every mode, Sonnet grader in a
+  temporary folder holding one answer and its criteria, report with score and cost per mode, traps refused,
+  unknown citations and break-even; transcripts to `runs/eval/`, never used for dreaming).
+  `examples/sec-deal/core-tier.toml` holds the notebook's 6 held-out and 4 demo questions with criteria from
+  its comments and notes; the demo buyer-side question's criteria stay generic (parent, purchaser, merger
+  subsidiary, Permira funds) because the notebook names no entities for it. Still to do: draft
+  `quickstart-tier.toml` from the fetched quickstart-tier documents (needs `EDGAR_USER_AGENT`), owner approval
+  of that file, then the paid eval (allowance $4).
+- M4: `wiki dream` (transcripts since the newest `dream-accepted-*` tag, at least 5; branch `dream/<ts>` in its
+  own worktree; parallel read-only analysts; one apply run that may only add to addenda/open_questions/
+  `_aliases.md` and only mark `retracted`/`valid_to` elsewhere; recompile and reindex on the branch;
+  `wiki check --against` the base; summary of findings, files changed, conflicts and retractions;
+  `--accept` merges and tags, `--discard` deletes; never merges on its own). The paid dream over ≥5
+  quickstart-tier transcripts awaits approval (allowance $4).
+- README.md covers setup, every command, costs, the Console spend limit and the cron line for dreaming.
+
+Tests: ask in each mode (working folders and added folders per SPEC's table, eval files never reachable),
+the trap refused, eval end to end and its scoring, question-file validation, dream accept / discard /
+fewer than 5 transcripts / a dream that changes a fact line is refused.
+
+Cost: $0.00. Total spent so far: $0.00 of $50.

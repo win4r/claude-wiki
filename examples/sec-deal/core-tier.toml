@@ -1,0 +1,114 @@
+# Core-tier question set: the knowledge-wiki quickstart notebook's 6 held-out questions and its 4 demo
+# questions (MIT, see NOTICE). Criteria come from the expected answers in the notebook's comments and notes.
+# One point per criterion met.
+
+[[question]]
+id = "demo-price"
+kind = "cross-document"
+question = "What is the per-share merger consideration, and how did it change during the process?"
+criteria = [
+  "Leads with $46.50 per share in cash as the current consideration",
+  "Says it was revised up from the original $44.00 per share",
+  "Places the $44.00 in the merger announcement and the $46.50 in the later amendment (September 2024)",
+  "Cites a source unit for each figure",
+]
+
+[[question]]
+id = "demo-ebitda"
+kind = "cross-document"
+question = "I've seen more than one FY2023 adjusted EBITDA figure in this room. Reconcile them - are they comparable?"
+criteria = [
+  "Gives the company's reported FY2023 adjusted EBITDA of $235.4M, tied to its own filing",
+  "Gives the estimate of about $252M on the Credit Agreement (Consolidated EBITDA) definition, from the analyst note",
+  "Says the two are not comparable because they are computed on different definitions",
+  "Treats the $252M as a third-party estimate that the filings do not confirm, not as a reported figure",
+]
+
+[[question]]
+id = "demo-buyer"
+kind = "cross-document"
+question = "Which legal entities make up the buyer side of the take-private - the parent, the purchaser, the merger subsidiary and the funds behind them - how are they related, and which of them merged into the company? Name entities only, not individuals."
+criteria = [
+  "Names the buyer's parent entity",
+  "Names the purchaser entity",
+  "Names the merger subsidiary and says it merged into the company, which survived",
+  "Names the Permira funds as the sponsor behind the buyer vehicles",
+  "Names no individual",
+]
+
+[[question]]
+id = "demo-trap"
+kind = "trap"
+question = "What was the company's revenue for fiscal year 2025?"
+criteria = [
+  "Refuses: says the figure is not available (not in the wiki or documents) and gives no FY2025 revenue figure",
+  "Names the document that would be needed, such as FY2025 financial statements",
+]
+
+[[question]]
+id = "held-tender"
+kind = "lookup"
+question = "What were the final results of the tender offer, and when and how did the merger close?"
+criteria = [
+  "Says the offer expired on October 11, 2024",
+  "Gives 46,971,451 Class A shares tendered (about 97.5% of the voting power with the rollover holders' shares)",
+  "Says the merger became effective on October 17, 2024",
+  "Says it closed under DGCL Section 251(h), with no stockholder vote",
+]
+
+[[question]]
+id = "held-buybacks"
+kind = "lookup"
+question = "How much of its own stock did the company buy back during fiscal 2023, at what average price, and how much repurchase authorization remained at year end?"
+criteria = [
+  "Gives 1,279,256 shares (about 1.3 million) repurchased for $26.0M",
+  "Reports the filing's stated weighted-average price of $22.17",
+  "Gives $53.8M remaining of the $200M program at year end",
+  "Keeps the new $500M program authorized on February 26, 2024 separate from the year-end figure",
+]
+
+[[question]]
+id = "held-fees"
+kind = "lookup"
+question = "What fees are Centerview and J.P. Morgan each owed for their work on the merger, and on what terms?"
+criteria = [
+  "Centerview (special committee advisor): about $45M in all",
+  "Centerview: $2.5M on delivering its opinion, the rest on closing",
+  "J.P. Morgan (company advisor): about $45M, payable on closing",
+  "Says J.P. Morgan gave no fairness opinion",
+]
+
+[[question]]
+id = "held-results"
+kind = "cross-document"
+question = "How did revenue and net income or loss develop from fiscal 2022 through the first quarter of 2024?"
+criteria = [
+  "Revenue $867.0M in FY2022 and $1,012.3M in FY2023",
+  "Q1 2024 revenue $281.1M, against $237.0M in Q1 2023",
+  "Net loss of $252.2M in FY2022 and $7.1M in FY2023",
+  "Net income of about $0.1M in Q1 2024",
+]
+
+[[question]]
+id = "held-financing"
+kind = "cross-document"
+question = "Setting the existing stockholders' rollover aside, how was the take-private financed? List the sponsors' equity commitments and the debt facilities, with amounts and who provides each. If you compute or infer a figure the filings don't state, label it as computed."
+criteria = [
+  "Equity commitments of up to $2.826B: Permira funds up to $2.426B and Accel funds $400M",
+  "Notes the equity commitment being amended down to about $2.71B per the proxy",
+  "Debt: a $2.3B term loan ($2.1B in the credit agreement signed at closing), a $300M delayed-draw term loan and a $250M revolver",
+  "Names the lenders as a group led by Blackstone, Blue Owl and Ares",
+  "Labels any computed figure as computed",
+]
+
+[[question]]
+id = "held-ga-accel"
+kind = "cross-document"
+question = "Before the deal, what did the General Atlantic and Accel funds each own at the fund level, and what did each fund commit to in its support agreement? Report the funds' and entities' holdings only: do not name any individual or mention individually held shares, even to say what you left out."
+criteria = [
+  "General Atlantic: 10.6M Class A and 4.96M Class B shares",
+  "Accel funds: 14,514,196 Class A shares, about 2.6% of the votes",
+  "Support agreements to vote for the deal and roll over equity: $400M (General Atlantic) and $25.7M (Accel)",
+  "Says the Accel funds also committed $400M of new equity",
+  "Names no individual and mentions no individually held shares",
+]
