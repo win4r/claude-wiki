@@ -119,6 +119,12 @@ def test_write_outside_owned_paths_is_discarded_and_retried(loaded, monkeypatch)
     assert any(t["attempts"] == 2 for k, t in st["tasks"].items() if k.startswith("extract"))
     assert not (loaded.wiki / "entities" / "intruder.md").exists()
     assert list(loaded.runs.glob("build-*/*.violations.txt"))
+    retry = json.loads(next(loaded.runs.glob("build-*/extract-*-retry.cmd.json")).read_text())["argv"]
+    task = retry[retry.index("-p") + 1]
+    assert "previous attempt was rejected" in task and "entities/intruder.md" in task
+    first = json.loads(next(p for p in sorted(loaded.runs.glob("build-*/extract-b*.cmd.json"))
+                            if "-retry" not in p.name).read_text())["argv"]
+    assert "previous attempt" not in first[first.index("-p") + 1]
     no_worktrees_left(loaded)
     check_ok(loaded)
 

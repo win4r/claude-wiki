@@ -5,6 +5,7 @@ Every writing run gets its own git worktree, made from the last commit, and may 
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import shutil
 import threading
@@ -44,6 +45,11 @@ def log(msg: str) -> None:
 
 # --- one writing task ------------------------------------------------------------------------------
 
+RETRY_NOTE = ("\n\nYour previous attempt was rejected by the program's checks and discarded, so the wiki is "
+              "unchanged; start again and avoid these problems: ")
+RETRY_NOTE_CHARS = 2000
+
+
 @dataclass
 class WriterTask:
     task_id: str
@@ -70,6 +76,7 @@ class TaskOutcome:
     attempts: int = 0
     changed: list[str] = field(default_factory=list)
     text: str = ""
+    feedback: bool = False  # the failure came from the program's checks, so the retry is told about it
 
 
 class Context:
@@ -174,13 +181,18 @@ def execute(ctx: Context, task: WriterTask) -> TaskOutcome:
     attempts = 2
     for attempt in range(1, attempts + 1):
         tid = task.task_id if attempt == 1 else f"{task.task_id}-retry"
-        result, reason, changed, text, retryable = _attempt(ctx, task, tid)
+        run_task = task
+        if attempt > 1 and out.reason and out.feedback:
+            # tell the retry what the program rejected, so it does not repeat it
+            run_task = dataclasses.replace(task, task_text=task.task_text + RETRY_NOTE + out.reason[:RETRY_NOTE_CHARS])
+        result, reason, changed, text, retryable = _attempt(ctx, run_task, tid)
         out.cost += result
         out.attempts = attempt
         if reason == "":
             out.ok, out.changed, out.text, out.reason = True, changed, text, ""
             return out
         out.reason = reason
+        out.feedback = not reason.startswith(("run ended:", "the command's cap", "the total budget"))
         log(f"  {tid}: failed ({reason})")
         if not retryable:
             break
@@ -650,6 +662,7 @@ def build(ws, resume: bool = False, estimate_only: bool = False, max_usd: float 
         _run_phases(ctx)
     except WikiError as why:
         ctx.state["stopped"] = str(why)
+        ctx.state["spent"] = round(ctx.spent_this_run(), 6)
         ctx.save_state()
         log(f"Build {run_id} stopped: {why}")
         log(f"Spent on this build: {cost_mod.usd(ctx.spent_this_run())}. Fix the cause, then run wiki build --resume.")

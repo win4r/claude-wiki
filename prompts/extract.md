@@ -24,12 +24,22 @@ How to file:
   standards, triggers, carve-outs, defined terms) and summarize the rest.
 - Profile every affiliate, subsidiary or portfolio company of a party the unit describes (line of business,
   size): conflicts can only be judged against these profiles.
-- Record absence only as "not in this document". Questions a deal team would ask that the unit leaves open go in
+- Record absence only as "not in this document", and only as a fact line with its source tag, like every other
+  list item. Questions a deal team would ask that the unit leaves open go in
   open_questions/<unit>.md, one per line, no essay. When you file a restrictive covenant (non-compete,
   exclusivity, non-solicit), add an open question on its enforceability under the stated governing law, naming
   the legal standard.
 - Metrics: one figure per line with its basis and period; never merge figures on different bases.
-- After each write, read the file back and confirm it holds what you meant.
+- Format rules the program checks; a file that breaks one is rejected with the whole batch:
+  - Every file's frontmatter `name:` is the bare unit slug, the file stem, with no folder:
+    `name: 10k-fy2023-part4`, never `name: metrics/10k-fy2023-part4`. Every file has frontmatter.
+  - Every `## ` heading in notes/<unit>.md is a slug (lowercase words joined by hyphens, as the schema says), such as
+    `## anthony-casalena`, never a display name such as `## Anthony Casalena`. Put display names in `aliases:`.
+  - Every list item (`- `) in notes, relations and metrics ends with a source tag, including "not in this
+    document" lines. A line with nothing to cite is not a fact: leave it out, or put it in open_questions. Do
+    not write filler such as "Other sections: none".
+  - In contracts/<unit>.md, put quotes in `>` blocks, each followed by its tag line. Any `- ` list item needs a tag too.
+- After each write, read the file back and confirm it holds what you meant and keeps the format rules.
 
 {common}
 
