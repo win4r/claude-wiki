@@ -190,10 +190,11 @@ grades. Report: `repo/eval/report-quickstart-tier-20261108T103252Z.md`.
 | both | 83% (25/30) | yes | $0.0027 |
 
 What the answers show:
-- **A wrong statement in the wiki.** The Tock pages say the 8-K "does not state the consideration", but it gives
-  $400,000,000 in cash. The wiki-mode answer lost that point, and the both mode recovered it from the document. Extraction missed the
-  price and recorded its absence as a fact. This is the kind of error M4's dream should find and fix (an addendum
-  for the price, and a retraction of the "not stated" line).
+- **A placement gap, not a wrong fact** (corrected after checking the wiki during M4). The $400,000,000 Tock price
+  *is* in the wiki: in `notes/8-k-20240621.md` under the `squarespace` heading, and on the `squarespace` and
+  `american-express-travel-related-services` pages. The `tock` and `tock-securities-purchase-agreement` pages don't
+  carry it, and the wiki-mode reader, looking only at those pages, wrongly said the filing doesn't state the
+  price. In a later wiki-mode ask the reader found it.
 - Both mode missed the repaid JPMorgan facility ("the wiki does not cover this"), which wiki mode found. Both mode also left
   out two of the vendor-extract near-miss rows. Answers in both mode do worse than wiki mode on this set, which isn't what you'd expect.
 - **Citations of things that aren't units.** Wiki- and both-mode answers sometimes cite an entity slug (`squarespace`,
