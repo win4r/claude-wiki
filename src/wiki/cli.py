@@ -176,7 +176,6 @@ def cmd_cost(ws) -> int:
 
 def cmd_status(ws) -> int:
     from .check import kind_of, read_wiki
-    from .dream import load_dreams, open_dream
     from .manifest import Manifest
 
     m = Manifest.load(ws.manifest_path)
@@ -197,9 +196,10 @@ def cmd_status(ws) -> int:
         print(f"Last build: {st['build_id']} ({state}; spent {cost_mod.usd(st.get('spent', 0) or 0)})")
     else:
         print("Last build: none")
-    dreams = load_dreams(ws)
+    dreams_file = ws.runs / "dreams.json"
+    dreams = json.loads(dreams_file.read_text()) if dreams_file.exists() else []
     print(f"Last dream: {dreams[-1]['ts']} ({dreams[-1]['status']})" if dreams else "Last dream: none")
-    d = open_dream(ws)
+    d = next((x for x in reversed(dreams) if x["status"] in ("review", "failed-check")), None)
     branches = gitops.branches(ws.repo, "dream/*")
     print(f"Open review branch: {d['branch']} ({d['status']})" if d else
           ("Open review branch: " + ", ".join(branches) if branches else "Open review branch: none"))
