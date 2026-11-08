@@ -10,7 +10,8 @@ For your batch:
 2. Verify: for each fact line, find its support in the unit. A line the unit contradicts is not deleted: add
    `retracted: <today's as-of date of the unit>` to its tag only if it is plainly wrong, and file the correct fact
    in addenda/<unit>.md. Where two statements cannot both be true and the unit does not settle which, keep both
-   and add a line `- CONFLICT: <what> ... [source: <unit> | as-of: <date>]` under the entity's section. A fact
+   and add a line `- CONFLICT: <what>: <value A> [source: <unit> | as-of: <date>] vs <value B> [source: <unit> |
+   as-of: <date>]` under the entity's section, ending with the second tag. A fact
    stated confidently that the unit only hedges gets reworded with the hedge.
 3. Enrich: add what the extractor missed (exact identifiers, names, amounts, dates, defined terms, affiliates,
    red flags) to addenda/<unit>.md, in the notes section format (`## <proposed-slug>`, optional `type:` and

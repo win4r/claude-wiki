@@ -243,3 +243,13 @@ def test_stale_lock_is_taken_over(loaded):
     with loaded.lock("build"):
         pass
     assert not loaded.lock_path.exists()
+
+
+def test_resumed_task_is_told_why_it_failed(loaded, monkeypatch):
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "outside:extract@alpha-8k:2")
+    assert build(loaded) == 2
+    failed_id = next(k for k, t in state_of(loaded)["tasks"].items() if t["status"] == "failed")
+    monkeypatch.delenv("WIKI_FAKE_MISBEHAVE")
+    assert build(loaded, resume=True) == 0
+    argv = json.loads(next(loaded.runs.glob(f"build-*/{failed_id}.cmd.json")).read_text())["argv"]
+    assert "previous attempt was rejected" in argv[argv.index("-p") + 1]

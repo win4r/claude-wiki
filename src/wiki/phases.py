@@ -178,11 +178,15 @@ def owned(task: WriterTask, rel: str) -> bool:
 def execute(ctx: Context, task: WriterTask) -> TaskOutcome:
     """Run one writing task in its own worktree, check what it changed, merge it or discard it; retry once."""
     out = TaskOutcome(task.task_id, False)
+    prior = ctx.task_state(task.task_id) if ctx.state is not None else {}
+    if prior.get("status") in ("failed", "running") and prior.get("reason"):  # a resumed task learns why it failed last time
+        out.reason = prior["reason"]
+        out.feedback = not out.reason.startswith(("run ended:", "the command's cap", "the total budget"))
     attempts = 2
     for attempt in range(1, attempts + 1):
         tid = task.task_id if attempt == 1 else f"{task.task_id}-retry"
         run_task = task
-        if attempt > 1 and out.reason and out.feedback:
+        if out.reason and out.feedback:
             # tell the retry what the program rejected, so it does not repeat it
             run_task = dataclasses.replace(task, task_text=task.task_text + RETRY_NOTE + out.reason[:RETRY_NOTE_CHARS])
         result, reason, changed, text, retryable = _attempt(ctx, run_task, tid)
