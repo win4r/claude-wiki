@@ -60,6 +60,20 @@ def test_ask_each_mode(built, mode, capsys):
     assert line["command"] == "ask" and line["phase"] == f"ask-{mode}"
 
 
+def test_ask_retries_once_when_citing_non_units(built, capsys, monkeypatch):
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "slugcite:ask")
+    assert main(["-w", str(built.root), "ask", "What price per share did Acme agree to?", "--mode", "wiki"]) == 0
+    assert "all in the manifest" in capsys.readouterr().out
+    rec = json.loads(sorted((built.runs / "ask").glob("*-wiki.json"))[-1].read_text())
+    assert not rec["unknown_units"] and "_schema.md" in rec["citation_retry"]
+    retry = json.loads(sorted((built.runs / "ask").glob("*-wiki-cite.cmd.json"))[-1].read_text())
+    note = " ".join(retry["argv"])
+    assert "not source units" in note and "is an entity page; its facts come from the units" in note
+    assert "is a wiki file" in note
+    lines = [e for e in Ledger(built.ledger_path).entries() if e["command"] == "ask"]
+    assert len(lines) == 2 and rec["cost_usd"] == pytest.approx(sum(e["cost_usd"] for e in lines[-2:]))
+
+
 def test_ask_trap_is_refused(built, capsys):
     assert main(["-w", str(built.root), "ask", "What was revenue in fiscal 2025?", "--mode", "wiki"]) == 0
     assert "Not in the wiki" in capsys.readouterr().out
@@ -91,6 +105,12 @@ def test_grade_parsing_and_scoring():
     assert parse_grade('{"met": [true, false]}', 2) == [True, False]
     assert parse_grade('noise {"met": [true]} tail', 1) == [True]
     assert parse_grade('{"met": [true]}', 2) is None and parse_grade("nope", 1) is None
+    # a grader that corrects itself: the last valid object wins
+    corrected = ('{"met": [true, false], "notes": ["a", "b"]}\n\nCorrection: the second entry is wrong.\n\n'
+                 '{"met": [true, true], "notes": ["a", "{b}"]}')
+    assert parse_grade(corrected, 2) == [True, True]
+    assert parse_grade('{"met":[false,true]}\n\nWait, need notes.\n\n{"met":[false,true],"notes":["x","y"]}', 2) == [False, True]
+    assert parse_grade('{"met": [true, true]} then {"met": [true]}', 2) == [True, True]
     recs = [
         {"mode": "wiki", "kind": "lookup", "criteria": ["a", "b"], "met": [True, True], "cost_usd": 0.01,
          "refused": False, "unknown_units": []},

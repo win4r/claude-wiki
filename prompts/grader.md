@@ -7,4 +7,5 @@ guess a figure. Partial credit does not exist: met or not met.
 
 Reply with one JSON object on a single line and nothing else:
 {"met": [true, false, ...], "notes": ["one short reason per criterion", ...]}
-with exactly one entry per criterion, in order.
+with exactly one entry per criterion, in order. Decide before you write it: print exactly one JSON object, with
+no correction or second object after it.

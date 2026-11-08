@@ -2,7 +2,7 @@
 
 It reads its task, writes canned files into its working directory, and emits stream-json with a made-up cost.
 It can misbehave on purpose: WIKI_FAKE_MISBEHAVE="<mode>[:<role>[:<times>]]" with mode one of
-outside, markers, input, fail, noresult, overcap, maxturns, badtools, extras, hang, lifecycle; <role> may be
+outside, markers, input, fail, noresult, overcap, maxturns, badtools, extras, hang, lifecycle, slugcite; <role> may be
 <role>@<text> to pick only runs whose task contains <text>. WIKI_FAKE_STATE is a folder for
 counters; WIKI_FAKE_COST the cost each run reports.
 
@@ -290,7 +290,7 @@ def do_index(cwd: Path, inputs: list[Path], task: str):
 
 
 def do_ask(cwd: Path, task: str, add_dirs: list[Path]):
-    q = task.split("Ask:", 1)[1].split("\n(Source documents", 1)[0].strip()
+    q = task.split("Ask:", 1)[1].split("\n(Source documents", 1)[0].split("\n\n", 1)[0].strip()
     is_wiki = (cwd / "_index.md").exists()
     if "2025" in q:
         return "Not in the wiki" if is_wiki else "Not in the documents", ["Read"]
@@ -401,6 +401,9 @@ def main():
         text = do_index(cwd, add_dirs, a["task"])
     elif role == "ask":
         text, uses = do_ask(cwd, a["task"], add_dirs)
+        if mode == "slugcite" and "not source units" not in a["task"]:
+            slug = next((p.stem for p in sorted((cwd / "entities").glob("*.md"))), "acme")
+            text = re.sub(r"\[source: [^ |\]]+", f"[source: {slug}", text) + " [source: _schema.md | as-of: n/a]"
     elif role == "dream_analyst":
         text = do_dream_analyst(add_dirs)
     elif role == "dream_apply":

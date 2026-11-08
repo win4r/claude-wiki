@@ -45,19 +45,25 @@ def load_questions(path: Path) -> list[dict]:
 
 
 def parse_grade(text: str, n: int) -> list[bool] | None:
-    """The grader's {"met": [...]} with exactly n booleans, or None."""
-    text = (text or "").strip()
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end == -1:
-        return None
-    try:
-        obj = json.loads(text[start:end + 1])
-    except ValueError:
-        return None
-    met = obj.get("met") if isinstance(obj, dict) else None
-    if not isinstance(met, list) or len(met) != n or not all(isinstance(x, bool) for x in met):
-        return None
-    return met
+    """The grader's last {"met": [...]} with exactly n booleans, or None.
+
+    A grader sometimes corrects itself and prints a second object after the first, so every object in the
+    text is tried and the last valid one wins."""
+    text = text or ""
+    decoder = json.JSONDecoder()
+    found = None
+    i = text.find("{")
+    while i != -1:
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except ValueError:
+            i = text.find("{", i + 1)
+            continue
+        met = obj.get("met") if isinstance(obj, dict) else None
+        if isinstance(met, list) and len(met) == n and all(isinstance(x, bool) for x in met):
+            found = met
+        i = text.find("{", end)
+    return found
 
 
 def score(records: list[dict], build_cost: float) -> dict:
@@ -82,6 +88,7 @@ def score(records: list[dict], build_cost: float) -> dict:
             "traps": len(traps),
             "ungraded": sum(1 for r in rs if r.get("met") is None),
             "unknown_citations": sorted({u for r in rs for u in r["unknown_units"]}),
+            "citation_retries": sum(1 for r in rs if r.get("citation_retry")),
         }
     src = out["modes"].get("sources")
     for mode, m in out["modes"].items():
@@ -107,6 +114,9 @@ def report_markdown(name: str, summary: dict, records: list[dict]) -> str:
     for mode, m in summary["modes"].items():
         if m["unknown_citations"]:
             lines.append(f"- {mode}: cited units not in the manifest: {', '.join(m['unknown_citations'])}")
+        if m.get("citation_retries"):
+            lines.append(f"- {mode}: {m['citation_retries']} answer(s) asked again for citing ids outside the manifest "
+                         "(both runs' cost counted)")
         if m["ungraded"]:
             lines.append(f"- {mode}: {m['ungraded']} answer(s) could not be graded")
         if mode != "sources" and m.get("saving_per_answer_usd") is not None and m["saving_per_answer_usd"] <= 0:

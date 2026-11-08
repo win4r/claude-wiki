@@ -11,6 +11,8 @@ Give every fact in your answer a source tag copied from the wiki, or for a fact 
 `[source: <unit> | as-of: <date>]`.
 <unit> is always a source unit id, the stem of a file under notes/ (for example `8-k-20240909`), never
 an entity page slug, a folder or a path; a page with no tag for a fact is not a source for it.
+Never cite `_schema.md` or another wiki file, an exhibit or agreement name, or "<a> via <b>": one unit id per
+tag, exactly as it appears in the tag you read. The program checks every id against the manifest.
 Report a CONFLICT line as a conflict, with both sides. A projection,
 estimate or superseded value is not the figure asked for: name it as what it is. If neither answers the
 question, start your answer with "Not in the wiki" and name the document that would answer it. Never guess.
