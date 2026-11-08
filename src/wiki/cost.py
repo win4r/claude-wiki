@@ -152,6 +152,11 @@ def usd(amount: float) -> str:
     return f"${amount:,.2f}"
 
 
+def usd_fine(amount: float) -> str:
+    """Like usd, with four decimals under a dime: per-answer costs are often a fraction of a cent."""
+    return f"${amount:,.4f}" if 0 < abs(amount) < 0.10 else usd(amount)
+
+
 def authorize(spent: float, total: float, estimate: float, cap: float, approve_over_cap: bool,
               what: str, reserve: float = 0.10) -> float:
     """The cap this command may spend, or WikiError. Hard stop at the total; ask when over the command's cap."""

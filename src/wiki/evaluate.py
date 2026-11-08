@@ -101,7 +101,7 @@ def report_markdown(name: str, summary: dict, records: list[dict]) -> str:
         be = m.get("break_even_answers")
         lines.append(
             f"| {mode} | {m['score']:.0%} | {m['criteria_met']}/{m['criteria_total']} | "
-            f"{cost_mod.usd(m['median_cost_usd'])} | {cost_mod.usd(m['mean_cost_usd'])} | "
+            f"{cost_mod.usd_fine(m['median_cost_usd'])} | {cost_mod.usd_fine(m['mean_cost_usd'])} | "
             f"{m['traps_refused']}/{m['traps']} | {'-' if mode == 'sources' else (f'{be:,.0f}' if be else 'never')} |")
     lines.append("")
     for mode, m in summary["modes"].items():
@@ -109,11 +109,14 @@ def report_markdown(name: str, summary: dict, records: list[dict]) -> str:
             lines.append(f"- {mode}: cited units not in the manifest: {', '.join(m['unknown_citations'])}")
         if m["ungraded"]:
             lines.append(f"- {mode}: {m['ungraded']} answer(s) could not be graded")
+        if mode != "sources" and m.get("saving_per_answer_usd") is not None and m["saving_per_answer_usd"] <= 0:
+            lines.append(f"- {mode}: break-even never: its answers cost {cost_mod.usd_fine(-m['saving_per_answer_usd'])} "
+                         "more on average than sources-mode answers, so the build cost is never paid back")
     lines += ["", "## Answers", ""]
     for r in records:
         met = r.get("met")
         lines.append(f"### {r['id']} ({r['kind']}) - {r['mode']}: "
-                     f"{'ungraded' if met is None else f'{sum(met)}/{len(met)}'} - {cost_mod.usd(r['cost_usd'])}")
+                     f"{'ungraded' if met is None else f'{sum(met)}/{len(met)}'} - {cost_mod.usd_fine(r['cost_usd'])}")
         lines.append("")
         lines.append("> " + (r["answer"] or "(no answer)").replace("\n", "\n> "))
         lines.append("")
@@ -180,7 +183,7 @@ def run_eval(ws, file: Path, estimate_only: bool = False, max_usd: float | None 
         rec["met"] = grade_once(ws, cfg, runner, run_dir, rec, shares[f"grade-{q['id']}-{m}"], grade_model)
         met = rec["met"]
         grade = "ungraded" if met is None else f"{sum(met)}/{len(met)}"
-        print(f"  {q['id']} {m}: {grade} {cost_mod.usd(rec['cost_usd'])}", flush=True)
+        print(f"  {q['id']} {m}: {grade} {cost_mod.usd_fine(rec['cost_usd'])}", flush=True)
         return rec
 
     with ThreadPoolExecutor(max_workers=max(1, concurrency or int(cfg.runner("concurrency", 4)))) as pool:

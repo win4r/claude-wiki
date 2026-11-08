@@ -177,6 +177,34 @@ Tuning after the run:
 
 Cost: $1.00 (allowance $8). Total spent so far: $1.21 of $50.
 
+## M3 Ask and eval — done (2026-11-08)
+
+The owner approved `quickstart-tier.toml` (8 questions). It is committed in the tool repo and copied to
+`repo/eval/`. The paid eval was approved at an estimate of $0.96 (cap $3) and spent **$0.24**: 24 answers and 24 Sonnet
+grades. Report: `repo/eval/report-quickstart-tier-20261108T103252Z.md`.
+
+| Mode | Score | Trap refused | Mean cost per answer |
+| --- | --- | --- | --- |
+| wiki | 90% (27/30) | yes | $0.0024 |
+| sources | 97% (29/30) | yes | $0.0015 |
+| both | 83% (25/30) | yes | $0.0027 |
+
+What the answers show:
+- **A wrong statement in the wiki.** The Tock pages say the 8-K "does not state the consideration", but it gives
+  $400,000,000 in cash. The wiki-mode answer lost that point, and the both mode recovered it from the document. Extraction missed the
+  price and recorded its absence as a fact. This is the kind of error M4's dream should find and fix (an addendum
+  for the price, and a retraction of the "not stated" line).
+- Both mode missed the repaid JPMorgan facility ("the wiki does not cover this"), which wiki mode found. Both mode also left
+  out two of the vendor-extract near-miss rows. Answers in both mode do worse than wiki mode on this set, which isn't what you'd expect.
+- **Citations of things that aren't units.** Wiki- and both-mode answers sometimes cite an entity slug (`squarespace`,
+  `block`) or a path (`open_questions`) as `source:`. The eval flags each of these, as designed. The ask prompts should insist on
+  unit ids; that's a prompt fix for the next eval.
+- **Break-even: never** on this tier. With a 92 KB corpus, reading the documents directly costs less per answer ($0.0015)
+  than going through the wiki ($0.0024). The core tier, with its much larger corpus, is the real test. The report now shows
+  sub-cent costs to four decimals and explains a break-even of "never" (it showed $0.00 everywhere before).
+
+Cost: $0.24 (allowance $4). Total spent so far: $1.45 of $50.
+
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
 M2, M3 and M4 each end in paid runs, and M0's live checks come first, so these milestones are not done. Their
