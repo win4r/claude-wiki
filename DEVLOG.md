@@ -231,6 +231,28 @@ Follow-ups (done after M4, before M5; prompts untested until the next paid run):
 
 Cost: $0.10 (allowance $4). Total spent so far: $1.54 of $50.
 
+## M5 Acceptance build — build done, eval awaiting approval (2026-11-08)
+
+The core-tier build is paid for and checked; the core-tier eval has not run yet.
+- Build: filed every unit, with no ownership violations (the 25 `violations.txt` files are all format
+  rejections that a retry fixed). Every source file is unchanged. It cost **$11.44** against an estimate of
+  $25.50 (cap approved over by the owner).
+- Fixes made during the build, each tested offline: extract prompt spells out the checked formats; a retry
+  is told why its first attempt was rejected, and a resumed task is told why it failed; unspent cap moves to
+  unfinished tasks before each phase (half the pool, shares only rise); git worktree add/remove are
+  serialized; `escalations.md` over the page limit is split by the program into `escalations-N.md`.
+- Design change (owner-approved): entity pages keep the Current picture and a `## Sources` table pointing
+  to the per-unit `notes/` and `relations/` files, instead of copying every fact line into `<slug>-facts-N`
+  pages. This makes the wiki **2,585,746 bytes against a 2,785,858-byte corpus (93%)**, where it was larger
+  than the corpus before. The recompile was done offline (no paid runs). Five `_index.md` lines that
+  listed the removed `squarespace-facts-*` pages were deleted by hand (workspace commit bcb3400).
+- `wiki check` on the core wiki: 0 errors, 173 warnings (missing link targets), 25 notes.
+- The core workspace's ledger total is set to $48.46, the $50 less what the other workspaces spent.
+
+Still to do: the core-tier eval (estimate $1.20, cap $3), then check the eval criteria.
+
+Cost so far: $11.44 (allowance $28). Total spent so far: $12.98 of $50.
+
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
 M2, M3 and M4 each end in paid runs, and M0's live checks come first, so these milestones are not done. Their
