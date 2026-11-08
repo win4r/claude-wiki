@@ -803,6 +803,12 @@ def _run_phases(ctx: Context) -> None:
         run_parallel(ctx, [t])
         _stop_if_failed(ctx, [t], "index", 8)
         _finish_phase(ctx, 8, "index")
+    from .compile import split_escalations
+
+    split = split_escalations(ctx.wiki)
+    if split:
+        log(f"  escalations.md split across {len([p for p in split if p.startswith('escalations')])} page(s)")
+        ctx.commit(f"build {ctx.run_id}: split escalations.md under the page limit")
     log("wiki check")
     findings = check_mod.run_checks(ctx.wiki, ctx.manifest(), repo=ctx.base_repo)
     errs = check_mod.errors(findings)

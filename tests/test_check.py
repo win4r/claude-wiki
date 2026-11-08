@@ -155,3 +155,26 @@ def test_compile_splits_large_pages_and_drops_empty_slugs(tmp_path):
     assert "acme" in res.needs_picture
     f = run_checks(w, manifest())
     assert not [x for x in errors(f) if x.rule in ("pages", "tag", "frontmatter")], [str(x) for x in errors(f)]
+
+
+def test_escalations_split_keeps_every_entry_and_passes_check(tmp_path):
+    import re
+
+    from wiki.compile import split_escalations
+
+    files = good_wiki()
+    entries = "".join(f"### {i}. Flag {i} — [[acme]]\nWhy it matters: {'z' * 600}\n"
+                      f"- Flag {i}. [source: u1 | as-of: 2024-01-01]\n\n" for i in range(1, 301))
+    digest = "".join(f"{i}. Flag {i} — [[acme]]\n" for i in range(1, 301))
+    files["escalations.md"] = page("escalations", "## Digest\n" + digest + "\n## Entries\n" + entries)
+    w = write(tmp_path, files)
+    assert len((w / "escalations.md").read_bytes()) > 100_000
+    written = split_escalations(w)
+    pages = sorted(w.glob("escalations*.md"))
+    assert len(pages) >= 3 and all(len(p.read_bytes()) < 100_000 for p in pages)
+    text = "".join((w / n).read_text() for n in ["escalations.md"] + [f"escalations-{k}.md" for k in range(2, len(pages) + 1)])
+    assert re.findall(r"^### (\d+)\.", text, re.M) == [str(i) for i in range(1, 301)]
+    assert "## Digest" in (w / "escalations.md").read_text() and "[[escalations-2]]" in (w / "escalations.md").read_text()
+    assert not [x for x in errors(run_checks(w, manifest())) if x.rule in ("size", "frontmatter", "layout")]
+    assert split_escalations(w) and len(sorted(w.glob("escalations*.md"))) == len(pages)  # stable on a rerun
+    assert "escalations.md" in written

@@ -10,7 +10,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .check import FACTS_PAGE, heading_map, kind_of, read_wiki
+from .check import ESCALATIONS_PAGE, FACTS_PAGE, heading_map, kind_of, read_wiki
 from .grammar import MARK_END, MARK_START, current_picture, frontmatter, parse_aliases, parse_sections
 
 SPLIT_AT = 80_000
@@ -154,3 +154,74 @@ def picture_lines(text: str) -> int:
     if not span:
         return 0
     return len([ln for ln in text[span[0]:span[1]].splitlines() if ln.strip()])
+
+
+ESCALATIONS_BUDGET = 78_000  # bytes per escalations page; the hard page limit is 100 KB
+
+
+def split_escalations(wiki_dir: Path, budget: int = ESCALATIONS_BUDGET) -> list[str]:
+    """Keep escalations.md under the page limit: the digest stays whole on escalations.md, and the full entries
+    (blocks that start with `### `) that do not fit move, in order, to escalations-2.md, escalations-3.md, ...
+
+    The program owns the continuation pages, as it owns entity fact pages. Returns the paths it wrote or removed.
+    """
+    from .grammar import split_frontmatter
+
+    wiki_dir = Path(wiki_dir)
+    main = wiki_dir / "escalations.md"
+    old = sorted(p for p in wiki_dir.glob("escalations-*.md") if ESCALATIONS_PAGE.match(p.name))
+    if not main.exists():
+        return []
+    text = main.read_text()
+    # an earlier split: put the continued entries back before splitting again
+    fm, body, has = split_frontmatter(text)
+    if old:
+        body = body.split(CONTINUED_MARK)[0]
+        for p in sorted(old, key=lambda q: int(ESCALATIONS_PAGE.match(q.name)["n"])):
+            _, more, _ = split_frontmatter(p.read_text())
+            body = body.rstrip("\n") + "\n\n" + more.split("\n", 1)[1].lstrip("\n")
+    head_fm = text[: len(text) - len(split_frontmatter(text)[1])] if has else ""
+    if len((head_fm + body).encode()) <= budget:
+        if not old:
+            return []
+        main.write_text(head_fm + body)
+        for p in old:
+            p.unlink()
+        return ["escalations.md"] + [p.name for p in old]
+    lines = body.splitlines(keepends=True)
+    first = next((i for i, ln in enumerate(lines) if ln.startswith("### ")), len(lines))
+    head, blocks = "".join(lines[:first]), []
+    for ln in lines[first:]:
+        if ln.startswith("### ") or not blocks:
+            blocks.append(ln)
+        else:
+            blocks[-1] += ln
+    pages: list[list[str]] = [[]]
+    used = len((head_fm + head).encode()) + 400
+    for b in blocks:
+        size = len(b.encode())
+        if pages[-1] and used + size > budget:
+            pages.append([])
+            used = 400
+        pages[-1].append(b)
+        used += size
+    written = []
+    names = ["escalations"] + [f"escalations-{n}" for n in range(2, len(pages) + 1)]
+    pointer = "Full entries continue on " + ", ".join(f"[[{n}]]" for n in names[1:]) + ", in rank order.\n"
+    main.write_text(head_fm + head + "".join(pages[0]).rstrip("\n") + "\n\n" + CONTINUED_MARK + "\n" + pointer)
+    written.append("escalations.md")
+    for n, (name, page) in enumerate(zip(names[1:], pages[1:]), start=2):
+        nxt = f" Continued on [[{names[n]}]]." if n < len(names) else ""
+        (wiki_dir / f"{name}.md").write_text(
+            f"---\nname: {name}\ndescription: Ranked red flags, continued: full entries, part {n} of {len(names)}, "
+            f"written by the program from escalations.md\n---\n"
+            f"Continued from [[{names[n - 2]}]]; the digest is on [[escalations]].{nxt}\n\n" + "".join(page))
+        written.append(f"{name}.md")
+    for p in old:
+        if p.name not in written:
+            p.unlink()
+            written.append(p.name)
+    return written
+
+
+CONTINUED_MARK = "<!-- escalations:continued -->"

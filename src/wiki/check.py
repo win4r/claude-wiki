@@ -18,6 +18,7 @@ TAGGED_DIRS = ("notes", "addenda", "contracts", "relations", "metrics")
 ROOT_FILES = {"_schema.md", "_index.md", "_aliases.md", "README.md", "escalations.md"}
 ROOT_STEMS = {Path(p).stem for p in ROOT_FILES}
 FACTS_PAGE = re.compile(r"^(?P<slug>[a-z0-9-]+)-facts-(?P<n>\d+)$")
+ESCALATIONS_PAGE = re.compile(r"^escalations-(?P<n>\d+)\.md$")  # program-split continuation pages
 MAX_PAGE = 100_000
 NOTE_PAGE = 20_000
 
@@ -45,7 +46,7 @@ def read_wiki(wiki_dir: Path) -> dict[str, str]:
 def kind_of(path: str) -> str:
     parts = path.split("/")
     if len(parts) == 1:
-        return "root" if path in ROOT_FILES else "other"
+        return "root" if path in ROOT_FILES or ESCALATIONS_PAGE.match(path) else "other"
     if len(parts) == 2 and parts[0] in PER_UNIT_DIRS:
         return parts[0]
     if len(parts) == 2 and parts[0] == "entities":
@@ -82,7 +83,7 @@ def run_checks(wiki_dir: Path, manifest, repo: Path | None = None, against: str 
 
     entity_pages = {Path(p).stem for p in files if kind_of(p) == "entity"}
     facts_pages = {Path(p).stem for p in files if kind_of(p) == "facts"}
-    link_targets = entity_pages | facts_pages | ROOT_STEMS
+    link_targets = entity_pages | facts_pages | ROOT_STEMS | {Path(p).stem for p in files if ESCALATIONS_PAGE.match(p)}
 
     for path, text in files.items():
         k = kind_of(path)
