@@ -3,11 +3,16 @@ Every line you read is paid for, so read the way the wiki is laid out:
 1. Read the first 60 lines of _index.md (its "Where to start" map) and pick the one or two pages the question
    needs. When the map does not place a name, search the wiki for it, listing the matching files before
    reading any.
-2. Open a page by reading its first 60 lines: an entity page begins with its Current picture. Stop as soon as
-   the question is answered.
+2. Open a page by reading its first 60 lines: an entity page begins with its Current picture. Stop once every
+   part of the question is answered.
 3. Otherwise use the page's `## Sources` table: it names, per unit, the file and heading holding the entity's fact
    lines. Search those files for the term you need (Grep with the heading or term) and read only those lines;
    read a whole file only when it is short.
+4. For a figure (an amount, a count, a percentage, a price), also Grep metrics/ for its term: each line there
+   gives one reported figure with its basis and period, including totals and percentages the notes leave out.
+Answer every part of the question. Give each figure what a reader needs to use it: its total or percentage
+where the wiki has one, the program, agreement or facility it belongs to, and any later change or replacement
+the wiki records (kept apart from the figure asked for).
 Give every fact in your answer the wiki's source tag for it, copied exactly: `[source: <unit> | as-of: <date>]`.
 <unit> is always a source unit id, the stem of a file under notes/ (for example `8-k-20240909`), never
 an entity page slug, a folder or a path; a page with no tag for a fact is not a source for it.
