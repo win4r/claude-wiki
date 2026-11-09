@@ -231,7 +231,7 @@ Follow-ups (done after M4, before M5; prompts untested until the next paid run):
 
 Cost: $0.10 (allowance $4). Total spent so far: $1.54 of $50.
 
-## M5 Acceptance build — build and eight evals done; score and cost not yet met together (2026-11-08)
+## M5 Acceptance build — build and eleven evals done; every criterion met except cost (a tie) (2026-11-08)
 
 The core-tier build is paid for and checked; the core-tier eval has not run yet.
 - Build: filed every unit, with no ownership violations (the 25 `violations.txt` files are all format
@@ -313,12 +313,33 @@ The core-tier build is paid for and checked; the core-tier eval has not run yet.
   30-hit result, and none of the three searches returned the fee line. So the agent concluded "not in the wiki" for facts that are in `notes/`. For example,
   Centerview's ~$45M fee is in notes/defm14a-merger-proxy-part2.md.
 
-Acceptance status: tests ✓, build ✓, check 0 errors ✓, wiki 93% of corpus ✓, trap refused ✓. The other
-three depend on the prompt. The previous prompt meets wiki ≥ 80% (87.8%) but not the cost criterion, and
-leaves one stray citation in 90 answers. The grep-first prompt meets cost and citations (0 of 90) but
-scores 78.0%. Awaiting the owner. The grep-first prompt is the one committed.
+- The owner approved one more round (commit 11bc27e). Every wiki-mode Grep is now limited to the fact
+  folders (glob `{notes,metrics,relations,addenda,contracts}/*.md`). The agent counts hits per file
+  first, then searches the top files with a narrower pattern, and narrows any search that hits its limit
+  before concluding that something is missing.
+- Three evals (reports 20261109T023435Z, T023735Z, T024247Z; spent **$1.15**):
 
-Cost so far: $14.46 (allowance $28). Total spent so far: $16.00 of $50.
+  | mode | run 1 | run 2 | run 3 | pooled | median cost (pooled) |
+  | --- | --- | --- | --- | --- | --- |
+  | wiki | 83% | 83% | 83% | **82.9% (102/123)** | $0.0027 |
+  | sources | 85% | 93% | 90% | 89.4% (110/123) | $0.0024 |
+  | both | 80% | 88% | 73% | 80.5% (99/123) | $0.0047 |
+
+  held-fees recovered to 9/12 and held-ga-accel to 9/15. No cited id is outside the manifest (one wiki
+  answer was asked again), and the trap was refused every time. Wiki answers take a median of 5 turns,
+  against 7 for sources.
+- Cost is a tie within the noise, not a win. Sources mode's prompt has not changed since the first eval,
+  yet its per-run median has ranged from $0.0023 to $0.0040 over 11 evals (pooled $0.0027 over 110
+  answers). Wiki mode's median was $0.0027 here, against $0.0024 for sources in the same runs. Wiki was
+  cheaper in run 3 only, and in 13 of 30 paired answers.
+
+Acceptance status (fact-folder prompt, committed): tests ✓, build ✓, check 0 errors ✓, wiki 93% of
+corpus ✓, wiki ≥ 80% ✓ (83% in each run), trap refused in every mode ✓, every cited unit in the manifest ✓
+(0 of 90). Wiki median cost < sources median: ✗ in the same-run comparison ($0.0027 vs $0.0024), and equal
+to sources mode's 11-eval median. Every SEC filing here is already plain text that Grep searches well, so
+on this corpus the wiki does not make answers cheaper. It gives the same accuracy in fewer turns.
+
+Cost so far: $15.61 (allowance $28). Total spent so far: $17.15 of $50.
 
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
