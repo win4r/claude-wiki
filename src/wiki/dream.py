@@ -11,7 +11,10 @@ from . import WikiError, gitops
 from . import check as check_mod
 from . import cost as cost_mod
 from .ledger import Ledger
-from .phases import Context, WriterTask, index_task, input_folder, lint_changed, link_task, now_id, phase_compile, run_parallel
+from .phases import (
+    Context, WriterTask, index_task, input_folder, lint_changed, link_task, now_id, phase_compile, run_parallel,
+    survival_problems,
+)
 from .prompts import render, write_prompt
 from .runner import Runner, RunSpec
 from .workspace import make_read_only, private_dir, remove_tree
@@ -49,24 +52,82 @@ def collect_transcripts(ws) -> list[Path]:
     return out
 
 
+RESULT_LINES = 8  # of each tool result shown to the analysts
+RESULT_LINE_CHARS = 200
+TOOL_INPUTS = ("file_path", "pattern", "path", "glob", "type", "output_mode", "-i", "-n", "-o", "-A", "-B", "-C",
+               "context", "multiline", "head_limit", "offset", "limit")
+
+
+def _result_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
+def reader_steps(stream: Path) -> list[str]:
+    """What a reader did, from its stream: each tool call with its inputs, and the start of what came back."""
+    if not stream.is_file():
+        return ["(stream not found)"]
+    steps: list[list[str]] = []  # one entry per tool call: the call line, then its result lines
+    by_id: dict[str, list[str]] = {}
+    # split on newlines only: a document line separator (U+2028) inside a JSON line must not cut the event
+    for raw in stream.read_text(errors="replace").split("\n"):
+        try:
+            ev = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(ev, dict) or ev.get("type") not in ("assistant", "user"):
+            continue
+        for block in (ev.get("message") or {}).get("content") or []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use":
+                inp = block.get("input") or {}
+                args = ", ".join(f"{k}={json.dumps(inp[k], ensure_ascii=False)}" for k in TOOL_INPUTS if k in inp)
+                step = [f"- {block.get('name')}({args})"]
+                steps.append(step)
+                by_id[str(block.get("id"))] = step
+            elif block.get("type") == "tool_result":
+                rows = _result_text(block.get("content")).strip("\n").splitlines()
+                shown = ["    > (error)"] if block.get("is_error") else []
+                shown += [f"    > {r[:RESULT_LINE_CHARS]}" for r in rows[:RESULT_LINES]]
+                if len(rows) > RESULT_LINES:
+                    shown.append(f"    > ({len(rows) - RESULT_LINES} more line(s))")
+                step = by_id.get(str(block.get("tool_use_id")))
+                if step is None:  # a result whose call is not in the stream
+                    step = ["- (a tool call)"]
+                    steps.append(step)
+                step += shown or ["    > (empty)"]
+    return [ln for step in steps for ln in step] or ["(no tool calls)"]
+
+
 def transcript_markdown(path: Path) -> str:
     rec = json.loads(path.read_text())
-    lines = [f"# Transcript {path.stem}", "", f"mode: {rec.get('mode')}", f"time: {rec.get('time')}", "",
-             "## Question", "", rec.get("question", ""), "", "## What the reader opened", ""]
-    stream = Path(rec.get("stream") or "")
-    if stream.exists():
-        for raw in stream.read_text(errors="replace").splitlines():
-            try:
-                ev = json.loads(raw)
-            except ValueError:
-                continue
-            if ev.get("type") != "assistant":
-                continue
-            for block in (ev.get("message") or {}).get("content") or []:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    inp = block.get("input") or {}
-                    what = inp.get("file_path") or inp.get("pattern") or inp.get("path") or ""
-                    lines.append(f"- {block.get('name')}: {what}")
+    flags = []
+    if rec.get("refused"):
+        flags.append('the reader answered "Not in ..." (a likely MISS)')
+    if rec.get("citation_retry"):
+        flags.append("its first answer cited ids that are not units (" + ", ".join(rec["citation_retry"])
+                     + ") and it was asked again")
+    if rec.get("retry_outcome"):
+        flags.append(f"the retry ended with {rec['retry_outcome']}, so the first answer was kept")
+    if rec.get("unknown_units"):
+        flags.append("the answer cites ids that are not units: " + ", ".join(rec["unknown_units"]))
+    if rec.get("malformed_tags"):
+        flags.append(f"{len(rec['malformed_tags'])} malformed source tag(s) in the answer")
+    if rec.get("outcome") and rec.get("outcome") != "success":
+        flags.append(f"the run ended with {rec['outcome']}")
+    lines = [f"# Transcript {path.stem}", "", f"mode: {rec.get('mode')}", f"time: {rec.get('time')}",
+             f"turns: {rec.get('turns')}", "flags: " + ("; ".join(flags) if flags else "none"), "",
+             "## Question", "", rec.get("question", ""), ""]
+    if rec.get("first_stream"):
+        lines += ["## First attempt (rejected by the program for its citations)", ""]
+        lines += reader_steps(Path(rec["first_stream"]))
+        lines += ["", "First answer:", "", rec.get("first_answer") or "(none)", ""]
+    lines += ["## What the reader did", ""]
+    lines += reader_steps(Path(rec.get("stream") or ""))
     lines += ["", "## Answer", "", rec.get("answer") or "(none)", ""]
     return "\n".join(lines)
 
@@ -185,7 +246,7 @@ def dream(ws, estimate_only=False, max_usd=None, model=None, concurrency=None, a
         if findings:
             # 4. one apply run, alone
             def validate(wiki, changed):
-                return lint_changed(ctx.manifest(), wiki, changed)
+                return survival_problems(wiki, changed) + lint_changed(ctx.manifest(), wiki, changed)
 
             apply = WriterTask(
                 task_id="apply", phase="dream-apply", role="dream_apply", prompt="dream_apply",

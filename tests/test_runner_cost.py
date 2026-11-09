@@ -132,6 +132,19 @@ def test_run_saves_stream_and_ledger(ws, tmp_path):
     assert "offline-test-placeholder" not in (ws.runs / "r1" / "t1.jsonl").read_text()
 
 
+def test_a_rerun_keeps_the_earlier_streams(ws, tmp_path):
+    r = Runner(ws, ws.config())
+    first = r.run(spec(ws, tmp_path))
+    first_text = first.stream_path.read_text()
+    second = r.run(spec(ws, tmp_path))
+    third = r.run(spec(ws, tmp_path))
+    d = ws.runs / "r1"
+    assert second.stream_path == third.stream_path == d / "t1.jsonl"  # the latest keeps the plain name
+    assert (d / "t1.prev1.jsonl").read_text() == first_text and (d / "t1.prev2.jsonl").exists()
+    assert (d / "t1.prev1.cmd.json").exists() and (d / "t1.prev1.stderr").exists()
+    assert first.session_id != third.session_id and third.session_id in (d / "t1.jsonl").read_text()
+
+
 @pytest.mark.parametrize("mode,outcome,full_cap,retryable", [
     ("fail", "error_during_execution", False, True),
     ("noresult", "no_result", True, True),
@@ -167,6 +180,35 @@ def test_version_and_key_checks(ws, monkeypatch):
         Runner(ws, ws.config()).check_ready()
 
 
+def test_a_test_that_undoes_the_fake_still_cannot_reach_claude(monkeypatch):
+    """Undoing the fixtures leaves the stub claude and no key, never the owner's: a review script once sent its
+    resumes to the real claude that way."""
+    import shutil
+    import subprocess
+
+    from conftest import STUB_CLAUDE
+
+    from wiki.runner import claude_bin
+
+    monkeypatch.undo()
+    assert "ANTHROPIC_API_KEY" not in os.environ
+    assert claude_bin() == str(STUB_CLAUDE) and shutil.which("claude") == str(STUB_CLAUDE)
+    proc = subprocess.run([claude_bin(), "--version"], capture_output=True, text=True)
+    assert proc.returncode == 97 and "never start claude" in proc.stderr
+
+
+@pytest.mark.live
+def test_a_live_test_runs_only_with_wiki_live_and_then_gets_the_owners_environment():
+    """Marked live with no skipif of its own, so plain pytest must skip it. Under WIKI_LIVE=1 it runs, spends
+    nothing, and sees the owner's key, PATH and claude, which no offline test sees."""
+    import conftest
+
+    assert os.environ.get("WIKI_LIVE") == "1"
+    assert os.environ.get("ANTHROPIC_API_KEY") == conftest._OWNER_ENV.get("ANTHROPIC_API_KEY")
+    assert os.environ.get("WIKI_CLAUDE_BIN") == conftest._OWNER_ENV.get("WIKI_CLAUDE_BIN")
+    assert os.environ["PATH"] == conftest._OWNER_PATH
+
+
 def test_env_passes_only_what_claude_needs(ws, monkeypatch):
     monkeypatch.setenv("SOME_OTHER_SECRET", "s3cret")
     env = Runner(ws, ws.config())._env()
@@ -200,3 +242,12 @@ def test_share_floor_keeps_the_pool():
     assert s["check"] / s["extract"] == pytest.approx(0.43 / 0.34)
     tiny = cost_mod.share({"a": 1.0, "b": 0.001}, 0.10, 0.10, floor=0.10)  # the pool can't give everyone the floor
     assert sum(tiny.values()) == pytest.approx(0.09)
+
+
+def test_a_rerun_moves_the_earlier_rejection_with_its_run(ws, tmp_path):
+    r = Runner(ws, ws.config())
+    r.run(spec(ws, tmp_path))
+    d = ws.runs / "r1"
+    (d / "t1.violations.txt").write_text("rejected\n")  # written by phases after a rejected run
+    r.run(spec(ws, tmp_path))
+    assert (d / "t1.prev1.violations.txt").read_text() == "rejected\n" and not (d / "t1.violations.txt").exists()

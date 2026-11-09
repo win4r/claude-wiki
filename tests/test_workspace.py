@@ -190,6 +190,32 @@ def test_ask_prompts_require_unit_ids_and_index_keeps_readme_points():
     assert "never an entity page slug" in wiki and "`_schema.md`" in wiki and "head_limit 30" in wiki and "{notes,metrics,relations,addenda,contracts}/*.md" in wiki
     idx = render("index", escalations=True)
     assert "_aliases.md` maps" in idx and '"computed"' in idx and "edit it in place" in idx
+    assert "## Sources` table" in idx
+
+
+def test_pictures_and_checks_are_told_the_rules_the_program_enforces():
+    from wiki import tool_root
+
+    flat = lambda s: " ".join(s.split())  # noqa: E731
+    steering = (tool_root() / "schemas" / "sec-deal" / "steering.md").read_text()
+    comp = flat(render("compile", steering=steering))  # the steering block too: it reaches every Compile run
+    assert "naming the page's sections" not in comp.replace("no headings, notes or lines naming the page's sections", "")
+    assert "Every line between the markers is a list item" in comp and "last plain line" not in comp.replace(
+        "even where an older _schema.md allows a last plain line", "")
+    assert "naming the page's slug" not in comp and "any `[[...]]` target its row lists" in comp
+    schema = flat((tool_root() / "schemas" / "sec-deal" / "_schema.md").read_text())
+    assert "last plain line" not in schema and "Every line there is a list item that holds either a fact line" in schema
+    assert "or a CONFLICT line: - Price:" in schema and schema.index("- CONFLICT:") < schema.index("## Sources` table")
+    chk = flat(render("check"))
+    assert "reworded with the hedge" not in chk and "rejects a run that rewords" in chk
+    assert "fix a malformed tag" not in chk and "A tag that is already filed is never malformed" in chk
+    assert "never delete or reword a line already there" in flat(render("resolve"))
+    assert "already filed, addenda/ included" in flat(render("dream_apply"))
+    from wiki.prompts import ESCALATIONS_RULES
+    from wiki.workspace import CLAUDE_MD
+
+    assert "retracted" in ESCALATIONS_RULES and "## Sources` table" in CLAUDE_MD and "Search that page" not in CLAUDE_MD
+    assert "flags:" in render("dream_analyst")
 
 
 def test_usd_fine():

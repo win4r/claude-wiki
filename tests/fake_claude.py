@@ -2,7 +2,10 @@
 
 It reads its task, writes canned files into its working directory, and emits stream-json with a made-up cost.
 It can misbehave on purpose: WIKI_FAKE_MISBEHAVE="<mode>[:<role>[:<times>]]" with mode one of
-outside, markers, input, fail, noresult, overcap, maxturns, badtools, extras, hang, lifecycle, slugcite; <role> may be
+outside, markers, input, fail, noresult, overcap, maxturns, badtools, extras, hang, lifecycle, slugcite,
+slugfail (slugcite, and the citation retry ends over its cap), reword (Check rewrites a filed notes line; Resolve and
+Dream apply rewrite a filed addenda line), plainpic (Compile writes a plain line in a picture), aliaslink (Link
+proposes the heading acme-co for acme, and Compile links [[acme-co]] in acme's picture); <role> may be
 <role>@<text> to pick only runs whose task contains <text>. WIKI_FAKE_STATE is a folder for
 counters; WIKI_FAKE_COST the cost each run reports.
 
@@ -196,19 +199,33 @@ def append_addendum(cwd: Path, unit: str, heading: str, line: str):
     p.write_text(text)
 
 
-def do_check(cwd: Path, inputs: list[Path]):
+def reword_addendum(cwd: Path) -> None:
+    """Rewrite the first filed addenda line, which Resolve and Dream apply must never do."""
+    for p in sorted((cwd / "addenda").glob("*.md")):
+        text = p.read_text()
+        if "\n- Checked against the unit." in text:
+            p.write_text(text.replace("\n- Checked against the unit.", "\n- Rechecked against the unit.", 1))
+            return
+
+
+def do_check(cwd: Path, inputs: list[Path], reword: bool = False):
     n = 0
     for d in inputs:
         for f in sorted(Path(d).glob("*.txt")):
             unit = f.stem
             h = first_heading(cwd, unit)
+            notes = cwd / "notes" / f"{unit}.md"
+            if reword and notes.exists():  # rewrite a line Extract filed, which Check must never do
+                notes.write_text(notes.read_text().replace("\n- ", "\n- Reworded: ", 1))
             if h:
                 append_addendum(cwd, unit, h, f"- Checked against the unit. {tag(unit, as_of(f.read_text()))}")
                 n += 1
     return f"verified: {n}"
 
 
-def do_resolve(cwd: Path, docs: Path, limit=10):
+def do_resolve(cwd: Path, docs: Path, limit=10, reword: bool = False):
+    if reword:
+        reword_addendum(cwd)
     done = 0
     for p in sorted((cwd / "open_questions").glob("*.md")):
         unit = p.stem
@@ -230,7 +247,7 @@ def do_resolve(cwd: Path, docs: Path, limit=10):
     return f"resolved: {done}"
 
 
-def do_link(cwd: Path, inputs: list[Path]):
+def do_link(cwd: Path, inputs: list[Path], alias_heading: bool = False):
     text = (Path(inputs[0]) / "headings.md").read_text()
     path = cwd / "_aliases.md"
     rows, _ = parse_aliases(path.read_text()) if path.exists() else ([], [])
@@ -250,11 +267,13 @@ def do_link(cwd: Path, inputs: list[Path]):
         for n in names:
             if n not in row.names:
                 row.names.append(n)
+    if alias_heading and "acme" in by_slug and "acme-co" not in by_slug["acme"].proposed:
+        by_slug["acme"].proposed.append("acme-co")
     path.write_text(render_aliases(rows))
     return f"rows: {len(rows)}"
 
 
-def do_compile(cwd: Path, task: str, bad_markers: bool):
+def do_compile(cwd: Path, task: str, bad_markers: bool, plain_line: bool = False, alias_link: bool = False):
     pages = re.findall(r"(entities/[a-z0-9-]+\.md)", task)
     for rel in pages:
         p = cwd / rel
@@ -265,7 +284,9 @@ def do_compile(cwd: Path, task: str, bad_markers: bool):
             body = (cwd / f).read_text().split(f"## {where}\n", 1)
             if len(body) == 2:
                 facts += [ln for ln in body[1].splitlines() if ln.startswith("- ") and "[source:" in ln][:1]
-        pic = "\n" + (facts[0] + "\n" if facts else "") + "Sections: the facts below, by unit.\n"
+        pic = "\n" + (facts[0] + "\n" if facts else "") + ("Sections: the facts below, by unit.\n" if plain_line else "")
+        if alias_link and rel == "entities/acme.md" and facts:
+            pic += "- Also filed as [[acme-co]]. " + facts[0][facts[0].index("[source:"):] + "\n"
         text = text[:a] + pic + text[b:]
         if bad_markers:
             text += "\nAn edit outside the markers.\n"
@@ -317,7 +338,9 @@ def do_dream_analyst(add_dirs: list[Path]):
     return f'- MISS: a fact readers missed | unit: {f.stem} | evidence: "see unit" {tag(f.stem, as_of(f.read_text()))}'
 
 
-def do_dream_apply(cwd: Path, add_dirs: list[Path], break_lifecycle: bool):
+def do_dream_apply(cwd: Path, add_dirs: list[Path], break_lifecycle: bool, reword: bool = False):
+    if reword:
+        reword_addendum(cwd)
     findings = [ln for d in add_dirs for p in Path(d).glob("findings-*.md") for ln in p.read_text().splitlines()
                 if ln.startswith("- MISS")]
     n = 0
@@ -379,6 +402,8 @@ def main():
     if mode == "noresult":
         return 1
     cost = float(os.environ.get("WIKI_FAKE_COST", "0.01"))
+    if mode == "slugfail" and "not source units" in a["task"]:
+        mode = "overcap"  # the citation retry
     if mode in ("fail", "overcap", "maxturns"):
         sub = {"fail": "error_during_execution", "overcap": "error_max_budget_usd", "maxturns": "error_max_turns"}[mode]
         emit({"type": "result", "subtype": sub, "is_error": True, "session_id": sid, "num_turns": 3,
@@ -390,24 +415,24 @@ def main():
     if role == "extract":
         text = do_extract(cwd, add_dirs)
     elif role == "check":
-        text = do_check(cwd, add_dirs)
+        text = do_check(cwd, add_dirs, mode == "reword")
     elif role == "resolve":
-        text = do_resolve(cwd, add_dirs[0])
+        text = do_resolve(cwd, add_dirs[0], reword=mode == "reword")
     elif role == "link":
-        text = do_link(cwd, add_dirs)
+        text = do_link(cwd, add_dirs, mode == "aliaslink")
     elif role == "compile":
-        text = do_compile(cwd, a["task"], mode == "markers")
+        text = do_compile(cwd, a["task"], mode == "markers", mode == "plainpic", mode == "aliaslink")
     elif role == "index":
         text = do_index(cwd, add_dirs, a["task"])
     elif role == "ask":
         text, uses = do_ask(cwd, a["task"], add_dirs)
-        if mode == "slugcite" and "not source units" not in a["task"]:
+        if mode in ("slugcite", "slugfail") and "not source units" not in a["task"]:
             slug = next((p.stem for p in sorted((cwd / "entities").glob("*.md"))), "acme")
             text = re.sub(r"\[source: [^ |\]]+", f"[source: {slug}", text) + " [source: _schema.md | as-of: n/a]"
     elif role == "dream_analyst":
         text = do_dream_analyst(add_dirs)
     elif role == "dream_apply":
-        text = do_dream_apply(cwd, add_dirs, mode == "lifecycle")
+        text = do_dream_apply(cwd, add_dirs, mode == "lifecycle", reword=mode == "reword")
     elif role == "grade":
         text = do_grade(cwd)
     else:

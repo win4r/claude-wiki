@@ -66,17 +66,34 @@ def parse_grade(text: str, n: int) -> list[bool] | None:
     return found
 
 
+def _criteria(rs: list[dict]) -> tuple[int, int]:
+    """(criteria met, criteria possible); an ungraded answer meets none of its criteria."""
+    return (sum(sum(r["met"]) for r in rs if r.get("met") is not None), sum(len(r["criteria"]) for r in rs))
+
+
+def answer_tokens(r: dict) -> int | None:
+    """Every token one answer took (input, output, cache reads and writes, over all its runs), when recorded."""
+    usage = r.get("usage")
+    return sum(int(v or 0) for v in usage.values()) if usage else None
+
+
 def score(records: list[dict], build_cost: float) -> dict:
-    """Per-mode score, cost per answer, trap refusals, unknown citations, and the break-even point."""
+    """Per-mode score (also per question kind), cost and tokens per answer, trap refusals, unknown citations,
+    and the break-even point."""
     out = {"modes": {}, "build_cost_usd": build_cost}
     for mode in MODES:
         rs = [r for r in records if r["mode"] == mode]
         if not rs:
             continue
-        met = sum(sum(r["met"]) for r in rs if r.get("met") is not None)
-        possible = sum(len(r["criteria"]) for r in rs)
+        met, possible = _criteria(rs)
         costs = [r["cost_usd"] for r in rs]
         traps = [r for r in rs if r["kind"] == "trap"]
+        by_kind = {}
+        for kind in sorted({r["kind"] for r in rs}):
+            k_met, k_possible = _criteria([r for r in rs if r["kind"] == kind])
+            by_kind[kind] = {"answers": sum(1 for r in rs if r["kind"] == kind), "criteria_met": k_met,
+                             "criteria_total": k_possible, "score": k_met / k_possible if k_possible else 0.0}
+        tokens = [t for t in (answer_tokens(r) for r in rs) if t is not None]
         out["modes"][mode] = {
             "answers": len(rs),
             "criteria_met": met,
@@ -89,6 +106,8 @@ def score(records: list[dict], build_cost: float) -> dict:
             "ungraded": sum(1 for r in rs if r.get("met") is None),
             "unknown_citations": sorted({u for r in rs for u in r["unknown_units"]}),
             "citation_retries": sum(1 for r in rs if r.get("citation_retry")),
+            "by_kind": by_kind,
+            "median_tokens": statistics.median(tokens) if tokens else None,
         }
     src = out["modes"].get("sources")
     for mode, m in out["modes"].items():
@@ -101,7 +120,8 @@ def score(records: list[dict], build_cost: float) -> dict:
 
 
 def report_markdown(name: str, summary: dict, records: list[dict]) -> str:
-    lines = [f"# Eval report: {name}", "", f"Build cost (ledger): {cost_mod.usd(summary['build_cost_usd'])}", "",
+    commit = f"; wiki at commit {summary['wiki_commit'][:10]}" if summary.get("wiki_commit") else ""
+    lines = [f"# Eval report: {name}", "", f"Build cost (ledger): {cost_mod.usd(summary['build_cost_usd'])}{commit}", "",
              "| mode | score | criteria met | median cost | mean cost | traps refused | break-even answers |",
              "| --- | --- | --- | --- | --- | --- | --- |"]
     for mode, m in summary["modes"].items():
@@ -111,6 +131,19 @@ def report_markdown(name: str, summary: dict, records: list[dict]) -> str:
             f"{cost_mod.usd_fine(m['median_cost_usd'])} | {cost_mod.usd_fine(m['mean_cost_usd'])} | "
             f"{m['traps_refused']}/{m['traps']} | {'-' if mode == 'sources' else (f'{be:,.0f}' if be else 'never')} |")
     lines.append("")
+    kinds = sorted({k for m in summary["modes"].values() for k in m.get("by_kind", {})})
+    if kinds:
+        lines += ["By question kind (criteria met), and tokens per answer:", "",
+                  "| mode | " + " | ".join(kinds) + " | median tokens |",
+                  "| --- | " + " | ".join("---" for _ in kinds) + " | --- |"]
+        for mode, m in summary["modes"].items():
+            cells = []
+            for k in kinds:
+                b = m.get("by_kind", {}).get(k)
+                cells.append(f"{b['score']:.0%} ({b['criteria_met']}/{b['criteria_total']})" if b else "-")
+            tok = m.get("median_tokens")
+            lines.append(f"| {mode} | " + " | ".join(cells) + f" | {f'{tok:,.0f}' if tok is not None else '-'} |")
+        lines.append("")
     for mode, m in summary["modes"].items():
         if m["unknown_citations"]:
             lines.append(f"- {mode}: cited units not in the manifest: {', '.join(m['unknown_citations'])}")
@@ -153,6 +186,9 @@ def grade_once(ws, cfg, runner: Runner, run_dir: Path, rec: dict, budget: float,
 
 def run_eval(ws, file: Path, estimate_only: bool = False, max_usd: float | None = None, model: str | None = None,
              concurrency: int | None = None, approve_over_cap: bool = False, modes=MODES) -> int:
+    modes = tuple(modes)  # refused before the estimate: a mistyped or repeated mode used to be paid for, then fail
+    if not modes or len(set(modes)) != len(modes) or any(m not in MODES for m in modes):
+        raise WikiError(f"--modes takes one or more of {', '.join(MODES)}, each once; got {','.join(modes) or 'none'}.")
     cfg = ws.config()
     ledger = Ledger(ws.ledger_path)
     path = Path(file)
@@ -175,14 +211,39 @@ def run_eval(ws, file: Path, estimate_only: bool = False, max_usd: float | None 
           f"{cost_mod.usd(total_est)} (cap {cost_mod.usd(cap_limit)})")
     if estimate_only:
         return 0
+    from . import gitops
+    from .phases import latest_unfinished
+
+    reads_wiki = any(m in ("wiki", "both") for m in modes)
+    if reads_wiki:  # the report names the commit its answers read, so that commit must be the wiki they read
+        dirty = gitops.git(ws.repo, "status", "--porcelain", "--untracked-files=all", "--", "wiki", "manifest.json")
+        if dirty.strip():
+            raise WikiError("repo/wiki or manifest.json has changes that are not committed, so the report could not "
+                            "say which wiki its answers read. Commit them, or finish the build with wiki build --resume.")
+        unfinished = latest_unfinished(ws)
+        if unfinished is not None:
+            raise WikiError(f"A build is unfinished ({unfinished.parent.name}); finish it with wiki build --resume "
+                            "before an eval of the wiki.")
+    eval_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    stem = f"report-{path.stem}-{eval_id}"
+    report_paths = [f"eval/{stem}.json", f"eval/{stem}.md"]
+    if path.resolve().is_relative_to(ws.repo.resolve()):
+        report_paths.append(str(path.resolve().relative_to(ws.repo.resolve())))  # a question file kept in eval/
+    # the report is committed with its question file: refuse before any run, not after every run is paid for
+    blocked = gitops.ignored(ws.repo, report_paths)
+    if blocked:
+        raise WikiError(f"git ignores {', '.join(blocked)} (a .gitignore rule or an excludes file), so the report "
+                        "could not be committed with its questions. Remove the rule, or keep the question file "
+                        "outside repo/.")
     runner = Runner(ws, cfg, ledger, concurrency)
     runner.check_ready()
     reserve = float(cfg.runner("reserve", 0.10))
     cap = cost_mod.authorize(ledger.spent(), cfg.total_usd, total_est, cap_limit, approve_over_cap, "this eval",
                              reserve)
     shares = cost_mod.share(estimates, cap, reserve)
-    eval_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir = private_dir(ws.runs / "eval" / eval_id)  # never feeds dreaming
+    # the wiki every answer reads; the workspace lock keeps it still. A sources-only eval reads no wiki.
+    wiki_commit = gitops.head(ws.repo) if reads_wiki else None
     jobs = [(q, m) for q in questions for m in modes]
 
     def one(job):
@@ -202,15 +263,13 @@ def run_eval(ws, file: Path, estimate_only: bool = False, max_usd: float | None 
     summary = score(records, build_cost)
     summary["file"] = path.name
     summary["eval_id"] = eval_id
+    summary["wiki_commit"] = wiki_commit
     summary["spent_usd"] = sum(r["cost_usd"] + r.get("grade_cost_usd", 0) for r in records)
     ws.eval_dir.mkdir(exist_ok=True)
-    stem = f"report-{path.stem}-{eval_id}"
     (ws.eval_dir / f"{stem}.json").write_text(json.dumps({"summary": summary, "answers": records}, indent=1,
                                                          ensure_ascii=False))
     (ws.eval_dir / f"{stem}.md").write_text(report_markdown(path.name, summary, records))
-    from . import gitops
-
-    gitops.commit_all(ws.repo, f"eval {eval_id}: report for {path.name}")
+    gitops.commit_paths(ws.repo, report_paths, f"eval {eval_id}: report for {path.name}")
     print(report_markdown(path.name, summary, records).split("## Answers")[0])
     print(f"Report: {ws.eval_dir / (stem + '.md')}; spent {cost_mod.usd(summary['spent_usd'])}")
     return 0

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from datetime import UTC, datetime
@@ -67,7 +68,15 @@ class Manifest:
         return cls(json.loads(Path(path).read_text()))
 
     def save(self, path: Path) -> None:
-        Path(path).write_text(json.dumps(self.data, indent=1, sort_keys=True) + "\n")
+        path = Path(path)
+        tmp = path.with_name(path.name + ".tmp")  # a stop mid-write never leaves a manifest no resume can load
+        try:
+            tmp.write_text(json.dumps(self.data, indent=1, sort_keys=True) + "\n")
+            tmp.replace(path)
+        except BaseException:  # nor a half-written copy for the next commit to pick up
+            with contextlib.suppress(OSError):
+                tmp.unlink(missing_ok=True)
+            raise
 
     @property
     def units(self) -> dict:

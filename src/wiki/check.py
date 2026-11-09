@@ -8,8 +8,9 @@ from pathlib import Path
 
 from . import gitops
 from .grammar import (
-    RED_FLAGS, fact_tag, is_list_item, is_slug, json_list, lifecycle_only_added, links_in,
-    parse_aliases, parse_sections, split_frontmatter, tags_in, unquote,
+    PICTURE_MAX_LINES, RED_FLAGS, LinkResolver, current_picture, fact_tag, is_list_item, is_slug, json_list,
+    lifecycle_only_added, links_in, parse_aliases, parse_sections, picture_text, plain_picture_lines,
+    split_frontmatter, strip_lifecycle, tags_in, unquote,
 )
 from .workspace import sha256_bytes
 
@@ -84,6 +85,10 @@ def run_checks(wiki_dir: Path, manifest, repo: Path | None = None, against: str 
     entity_pages = {Path(p).stem for p in files if kind_of(p) == "entity"}
     facts_pages = {Path(p).stem for p in files if kind_of(p) == "facts"}
     link_targets = entity_pages | facts_pages | ROOT_STEMS | {Path(p).stem for p in files if ESCALATIONS_PAGE.match(p)}
+    rows, alias_problems = parse_aliases(files.get("_aliases.md", ""))
+    headings = heading_map(files)
+    resolve = LinkResolver(rows, headings)
+    via_alias = 0  # links in per-unit files that name a proposed heading and reach their page through _aliases.md
 
     for path, text in files.items():
         k = kind_of(path)
@@ -122,11 +127,25 @@ def run_checks(wiki_dir: Path, manifest, repo: Path | None = None, against: str 
             add("error", "size", path, f"{size:,} bytes, over the 100 KB limit")
         elif size > NOTE_PAGE:
             add("note", "size", path, f"{size:,} bytes, over 20 KB")
-        # links
+        # links: a target is a page; in a per-unit file it may also be a heading _aliases.md maps to one page
         if k != "open_questions" and path != "_schema.md":
+            unit = stem if k in PER_UNIT_DIRS else None
             for target in links_in(body):
-                if target not in link_targets:
-                    add("warning", "link", path, f"link to missing page [[{target}]]")
+                if target in link_targets:
+                    continue
+                if unit is not None and resolve(target, unit) in entity_pages:
+                    via_alias += 1
+                    continue
+                add("warning", "link", path, f"link to missing page [[{target}]]")
+        # the Current picture: fact and CONFLICT lines only, at most PICTURE_MAX_LINES of them
+        if k == "entity" and current_picture(text):
+            plain = plain_picture_lines(text)
+            if plain:
+                add("warning", "picture", path, f"current picture has {len(plain)} line(s) that are not list items, "
+                                                f"e.g. {plain[0].strip()[:60]!r}")
+            n_lines = len([ln for ln in picture_text(text).splitlines() if ln.strip()])
+            if n_lines > PICTURE_MAX_LINES:
+                add("warning", "picture", path, f"current picture is {n_lines} lines, over {PICTURE_MAX_LINES}")
         # notes sections
         if k in ("notes", "addenda"):
             for s in parse_sections(text):
@@ -143,11 +162,13 @@ def run_checks(wiki_dir: Path, manifest, repo: Path | None = None, against: str 
     elif want and sha256_bytes(schema.encode()) != want:
         add("error", "schema", "_schema.md", "changed since wiki init")
 
+    if via_alias:
+        add("note", "link", "(wiki)", f"{via_alias} link(s) name a proposed heading; each reaches its page through "
+                                      "_aliases.md")
+
     # aliases
-    rows, problems = parse_aliases(files.get("_aliases.md", ""))
-    for p in problems:
+    for p in alias_problems:
         add("error", "aliases", "_aliases.md", p)
-    headings = heading_map(files)
     mapped_slugs: set[str] = set()
     for (unit, heading), rec in sorted(headings.items()):
         hits = []
@@ -227,27 +248,93 @@ def check_against(files: dict[str, str], repo: Path, ref: str) -> list[Finding]:
         if current is None:
             out.append(Finding("error", "against", path, "file deleted since the base"))
             continue
-        cur_lines = [ln for ln in current.splitlines() if fact_tag(ln) or ln.lstrip().startswith("[source:")]
-        used = [False] * len(cur_lines)
-        for n, line in enumerate(base_text.splitlines(), start=1):
-            if not (fact_tag(line) or line.lstrip().startswith("[source:")):
-                continue
-            hit = None
-            for i, c in enumerate(cur_lines):  # exact first, then lifecycle-only changes
-                if not used[i] and c.rstrip() == line.rstrip():
-                    hit = i
-                    break
-            if hit is None:
-                for i, c in enumerate(cur_lines):
-                    if not used[i] and lifecycle_only_added(line, c):
-                        hit = i
-                        break
-            if hit is None:
-                out.append(Finding("error", "against", path,
-                                   f"base line {n} missing or changed beyond valid_to/retracted: {line.strip()[:80]!r}"))
-            else:
-                used[hit] = True
+        for n, line in lost_lines(base_text, current):
+            out.append(Finding("error", "against", path,
+                               f"base line {n} missing or changed beyond valid_to/retracted: {line.strip()[:80]!r}"))
     return out
+
+
+def _filed(line: str) -> bool:
+    return bool(fact_tag(line) or line.lstrip().startswith("[source:"))
+
+
+def lost_lines(base_text: str, current_text: str) -> list[tuple[int, str]]:
+    """(line number, line) for each filed line of base_text that current_text no longer holds, either unchanged or
+    with only valid_to or retracted added. Lines may be added and moved, and each base line needs a current line
+    of its own: identical lines are paired first, then the rest by a maximum matching, so the order lines are
+    compared in never decides what counts as lost."""
+    base = [(n, ln) for n, ln in enumerate(base_text.splitlines(), start=1) if _filed(ln)]
+    room: dict[str, int] = {}  # current lines by their exact text: how many there are
+    for c in current_text.splitlines():
+        if _filed(c):
+            room[c.rstrip()] = room.get(c.rstrip(), 0) + 1
+    # Identical lines are many copies of one text, so the matching runs on texts: held[c][b] is how many current
+    # lines of text c hold base lines of text b. Augmenting paths are searched breadth-first, without recursion.
+    held: dict[str, dict[str, int]] = {c: {} for c in room}
+    used = dict.fromkeys(room, 0)
+    by_key: dict[str, list[str]] = {}  # current texts by their text without lifecycle marks
+    for c in room:
+        by_key.setdefault(strip_lifecycle(c), []).append(c)
+    # what comparing a base text with each current text of its group gave (0 not yet, 1 fits, 2 does not): a byte
+    # per pair, made for each base text a search starts from or reaches, so no pair is compared twice and a page
+    # of many lines that differ only in their dates stays small
+    marks: dict[str, bytearray] = {}
+
+    def fits(b: str, i: int, c: str) -> bool:  # c is text i of b's group in by_key
+        m = marks.get(b)
+        if m is None:
+            m = marks[b] = bytearray(len(by_key[strip_lifecycle(b)]))
+        if not m[i]:
+            m[i] = 1 if lifecycle_only_added(b, c) else 2
+        return m[i] == 1
+
+    rest = []
+    for n, line in base:
+        text = line.rstrip()
+        if used.get(text, 0) < room.get(text, 0):  # an unchanged line is always safe to pair
+            used[text] += 1
+            held[text][text] = held[text].get(text, 0) + 1
+        else:
+            rest.append((n, line))
+
+    def take(b0: str) -> bool:
+        """Pair one more base line of text b0, moving earlier pairs along an augmenting path if needed."""
+        prev: dict[tuple[str, str], tuple[str, str] | None] = {("b", b0): None}
+        queue = [("b", b0)]
+        for node in queue:
+            if node[0] == "b":
+                for i, c in enumerate(by_key.get(strip_lifecycle(node[1]), [])):
+                    if ("c", c) in prev or not fits(node[1], i, c):
+                        continue
+                    prev[("c", c)] = node
+                    if used[c] < room[c]:
+                        used[c] += 1
+                        step: tuple[str, str] = ("c", c)
+                        while (back := prev[step]) is not None:
+                            if back[0] == "b":  # back's text now holds step's current line
+                                held[step[1]][back[1]] = held[step[1]].get(back[1], 0) + 1
+                            else:  # step's text gives up back's current line
+                                held[back[1]][step[1]] -= 1
+                            step = back
+                        return True
+                    queue.append(("c", c))
+            else:
+                for b, k in held[node[1]].items():
+                    if k > 0 and ("b", b) not in prev:
+                        prev[("b", b)] = node
+                        queue.append(("b", b))
+        return False
+
+    # A text whose search failed stays unpaired: pairing other lines never opens a path for it. So its other copies
+    # are lost without a search, and a page of many copies of one dropped line takes no longer than one copy.
+    dead: set[str] = set()
+    lost = []
+    for n, line in rest:
+        text = line.rstrip()
+        if text in dead or not take(text):
+            dead.add(text)
+            lost.append((n, line))
+    return lost
 
 
 def is_slug_ok(s: str) -> bool:

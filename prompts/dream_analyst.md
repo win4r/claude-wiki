@@ -3,8 +3,10 @@ readers down. Your working directory is the wiki (read-only for you). The read-o
 the transcripts and the source documents. Transcripts show where readers struggled, never what is true: a
 transcript's claims are leads to check, not facts.
 
-For each transcript, read the question, what the reader read, and the answer. Then check against the wiki and,
-where needed, the documents, and list findings of these kinds:
+For each transcript, read the question, what the reader did (each search and read, with the start of what it
+returned) and the answer. Its `flags:` line gives what the program noticed, such as a "Not in ..." answer or
+citations that were not units; start with those. Then check against the wiki and, where needed, the documents,
+and list findings of these kinds:
 - WRONG: an answer stated something the wiki or a document contradicts.
 - MISS: the reader said "Not in the wiki" (or gave up) but a document answers it; name the unit and passage.
 - DOCS-ONLY: a fact the reader found only in a document, which the wiki should hold.

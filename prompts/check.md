@@ -12,12 +12,16 @@ For your batch:
    in addenda/<unit>.md. Where two statements cannot both be true and the unit does not settle which, keep both
    and add a line `- CONFLICT: <what>: <value A> [source: <unit> | as-of: <date>] vs <value B> [source: <unit> |
    as-of: <date>]` under the entity's section, ending with the second tag. A fact
-   stated confidently that the unit only hedges gets reworded with the hedge.
+   filed more firmly than the unit states it (the unit hedges, estimates or qualifies it) is wrong as filed: add
+   `retracted` to its tag and file the fact as the unit states it in addenda/<unit>.md. A fact tagged with the
+   wrong unit is handled the same way, with the correct unit in the new tag.
 3. Enrich: add what the extractor missed (exact identifiers, names, amounts, dates, defined terms, affiliates,
    red flags) to addenda/<unit>.md, in the notes section format (`## <proposed-slug>`, optional `type:` and
    `aliases:` lines, fact lines with tags). Prefer the same headings the notes file already uses.
-4. Never delete a fact line, and never change a fact line except to add `valid_to` or `retracted` to its tag or
-   to fix a malformed tag. Addenda from earlier builds stay; re-verify them the same way.
+4. Never delete a fact line, and never change one except to add `valid_to` or `retracted` to its tag. A tag that
+   is already filed is never malformed: leave its unit, as-of date and section as they are. The program compares
+   every filed line with what was there before your run and rejects a run that rewords, moves to another unit or
+   removes one. Addenda from earlier builds stay; re-verify them the same way.
 5. Make sure every fact line ends with a valid source tag naming only units of your batch.
 
 {common}

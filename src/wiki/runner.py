@@ -250,6 +250,7 @@ class Runner:
 
         private_dir(run_dir)
         stream_path = run_dir / f"{spec.task_id}.jsonl"
+        keep_previous(run_dir, spec.task_id)
         argv = self.argv(spec)
         (run_dir / f"{spec.task_id}.cmd.json").write_text(
             json.dumps({"argv": argv, "cwd": str(spec.cwd)}, indent=1)
@@ -364,6 +365,24 @@ class Runner:
             **usage,
         )
         return rr
+
+
+RUN_FILES = (".jsonl", ".stderr", ".cmd.json", ".violations.txt")  # the last is written by phases
+
+
+def keep_previous(run_dir: Path, task_id: str) -> None:
+    """A task run again under the same id (a resumed build) keeps the earlier run's files as <task>.prev<n>.*;
+    the latest run always has the plain names."""
+    run_dir = Path(run_dir)
+    if not any((run_dir / f"{task_id}{s}").exists() for s in RUN_FILES):
+        return
+    n = 1
+    while any((run_dir / f"{task_id}.prev{n}{s}").exists() for s in RUN_FILES):
+        n += 1
+    for s in RUN_FILES:
+        p = run_dir / f"{task_id}{s}"
+        if p.exists():
+            p.rename(run_dir / f"{task_id}.prev{n}{s}")
 
 
 def _wait(proc, seconds: float) -> bool:

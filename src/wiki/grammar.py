@@ -25,6 +25,7 @@ WIKILINK = re.compile(r"\[\[([^\[\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
 CODE_SPAN = re.compile(r"`[^`\n]*`")
 MARK_START = "<!-- current-picture:start -->"
 MARK_END = "<!-- current-picture:end -->"
+PICTURE_MAX_LINES = 30
 RED_FLAGS = "red-flags"
 
 
@@ -77,10 +78,13 @@ def lifecycle_only_added(base: str, current: str) -> bool:
         return True
     if strip_lifecycle(base) != strip_lifecycle(current):
         return False
-    bt, ct = fact_tag(base) or {}, fact_tag(current) or {}
-    for key in ("valid_to", "retracted"):
-        if bt.get(key) and bt.get(key) != ct.get(key):
-            return False
+    base_tags, cur_tags = tags_in(base)[0], tags_in(current)[0]
+    if len(base_tags) != len(cur_tags):
+        return False
+    for bt, ct in zip(base_tags, cur_tags):  # every tag of the line, a CONFLICT line's first tag included
+        for key in ("valid_to", "retracted"):
+            if bt.get(key) and bt.get(key) != ct.get(key):
+                return False
     return True
 
 
@@ -259,8 +263,67 @@ def resolve_heading(rows: list[AliasRow], unit: str, heading: str) -> list[str]:
     return hits
 
 
+class LinkResolver:
+    """The page a `[[target]]` names. Extractors link the heading they propose, before Link maps headings to
+    slugs, so a target is a row's slug or a heading that _aliases.md maps to one row (bare, or as
+    `<unit>#<heading>` for one unit)."""
+
+    def __init__(self, rows: list[AliasRow], headings=()):
+        self.slugs = {r.slug for r in rows}
+        self.by_entry: dict[str, set[str]] = {}
+        for r in rows:
+            for p in r.proposed:
+                self.by_entry.setdefault(p, set()).add(r.slug)
+        self.headings = set(headings)  # (unit, heading) of every notes and addenda section
+
+    @staticmethod
+    def _one(hits: set[str]) -> str | None:
+        return next(iter(hits)) if len(hits) == 1 else None
+
+    def __call__(self, target: str, unit: str | None = None) -> str | None:
+        """The one slug a link in `unit`'s per-unit files names, or None when it names no row or more than one.
+
+        The unit's own heading comes first, mapped as Link mapped it, so the link reaches the page that heading's
+        facts are on even when the heading is another entity's slug; then a slug; then a heading proposed bare."""
+        if unit:
+            hits = set(self.by_entry.get(f"{unit}#{target}", ()))
+            if (unit, target) in self.headings:
+                hits |= self.by_entry.get(target, set())
+            if hits:
+                return self._one(hits)
+        if target in self.slugs:
+            return target
+        return self._one(self.by_entry.get(target, set()))
+
+    def on_page(self, target: str, units=()) -> str | None:
+        """For a link on an entity page or root file, where links name slugs: a slug stands, and a heading
+        resolves only when every unit the line cites maps it to the same slug."""
+        if target in self.slugs:
+            return target
+        found = {self(target, u) for u in units} if units else {self(target)}
+        return found.pop() if len(found) == 1 else None
+
+
 def links_in(text: str) -> list[str]:
     return [t.strip() for t in WIKILINK.findall(CODE_SPAN.sub("", text))]
+
+
+def repoint_links(line: str, resolve) -> str:
+    """The line with each `[[target]]` outside code spans pointed at the slug `resolve(target)` gives (anchors and
+    labels kept); a link it cannot resolve stays as it is."""
+    def sub(m: re.Match) -> str:
+        target = m.group(1).strip()
+        slug = resolve(target)
+        if not slug or slug == target:
+            return m.group(0)
+        return "[[" + slug + m.group(0)[2 + len(m.group(1)):]
+
+    out, pos = [], 0
+    for code in CODE_SPAN.finditer(line):
+        out += [WIKILINK.sub(sub, line[pos:code.start()]), code.group(0)]
+        pos = code.end()
+    out.append(WIKILINK.sub(sub, line[pos:]))
+    return "".join(out)
 
 
 def current_picture(text: str) -> tuple[int, int] | None:
@@ -277,3 +340,14 @@ def outside_markers(text: str) -> str:
     if not span:
         return text
     return text[: span[0]] + text[span[1]:]
+
+
+def picture_text(text: str) -> str:
+    span = current_picture(text)
+    return text[span[0]:span[1]] if span else ""
+
+
+def plain_picture_lines(text: str) -> list[str]:
+    """Lines of a page's Current picture that are not list items. Every picture line is a fact or CONFLICT line;
+    the page's other sections are named by its Sources table."""
+    return [ln for ln in picture_text(text).splitlines() if ln.strip() and not is_list_item(ln)]

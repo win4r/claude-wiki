@@ -23,7 +23,7 @@ confirm. One real-world name belongs to one slug: if two rows would claim it, de
 pages to open first (the hub entities, the deal event, escalations.md) and what each answers; the catalog of
 every entity page and every unit follows.
 (b) Every entity page's Current picture holds the facts a reader most likely wants, current values first, each
-with its source tag; one line for every CONFLICT and every superseded value; a last plain line naming the page's
-other sections.
+with its source tag; one line for every CONFLICT and every superseded value. Every line is a list item; the
+page's Sources table names its other sections.
 (c) escalations.md opens with a digest: one short line per ranked item (number, title, entity) before the full
 entries.

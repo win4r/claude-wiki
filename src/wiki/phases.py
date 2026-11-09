@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import shutil
 import threading
 import time
@@ -19,9 +20,10 @@ from typing import Callable
 from . import WikiError, gitops
 from . import check as check_mod
 from . import cost as cost_mod
-from .compile import compile_pages, picture_lines
+from .compile import compile_pages, normalize_pictures, picture_lines
 from .grammar import (
-    RED_FLAGS, outside_markers, parse_aliases, parse_sections, split_frontmatter,
+    PICTURE_MAX_LINES, RED_FLAGS, fact_tag, outside_markers, parse_aliases, parse_sections, plain_picture_lines,
+    split_frontmatter,
 )
 from .ledger import Ledger
 from .manifest import Manifest, make_batches
@@ -32,7 +34,6 @@ from .workspace import make_read_only, private_dir, remove_tree, sha256_file
 PHASES = ["convert", "batch", "extract", "check", "resolve", "link", "compile", "index"]
 UNIT_DIRS_EXTRACT = ("notes", "contracts", "relations", "metrics", "open_questions")
 UNIT_DIRS_CHECK = UNIT_DIRS_EXTRACT + ("addenda",)
-PICTURE_MAX_LINES = 30
 
 
 def now_id() -> str:
@@ -65,6 +66,7 @@ class WriterTask:
     lifecycle_dirs: tuple[str, ...] = ()  # dream apply: may only add valid_to/retracted to lines here
     prepare: Callable[[Path], None] | None = None  # runs on the worktree's wiki/ before the run
     validate: Callable[[Path, list[str]], list[str]] | None = None  # (wt wiki, changed) -> problems
+    after_merge: Callable[[], None] | None = None  # runs on the base repo once the run's changes are merged
 
 
 @dataclass
@@ -98,6 +100,7 @@ class Context:
         self.shares = shares or {}
         self.cap = cap
         self.state_lock = threading.Lock()
+        self.page_lock = threading.Lock()  # manifest.json and pages written by the program while runs are merging
         self.state: dict = {}
         self._prompts: dict[str, Path] = {}
 
@@ -259,11 +262,44 @@ def _attempt(ctx: Context, task: WriterTask, tid: str):
             problems = task.validate(wt / "wiki", changed)
         if problems:
             (ctx.run_dir / f"{tid}.violations.txt").write_text("\n".join(problems) + "\n")
-            return rr.cost_usd, "; ".join(problems[:3]) + (" ..." if len(problems) > 3 else ""), [], "", True
+            return rr.cost_usd, retry_reason(problems, limit=RETRY_NOTE_CHARS), [], "", True
         merge_into(ctx.base_repo, wt, changed)
         return rr.cost_usd, "", changed, rr.text, False
     finally:
         gitops.worktree_remove(ctx.base_repo, wt)  # a worktree is never kept
+
+
+def retry_reason(problems: list[str], keep: int = 3, limit: int = RETRY_NOTE_CHARS) -> str:
+    """What a rejected run's retry is told, in at most `limit` characters: the first problem of each kind before
+    any second one of a kind, so a run rejected for two reasons hears both (the full list is in
+    <task>.violations.txt). A list that fits is told whole. Otherwise a problem too long for the room left is
+    passed over for the ones after it, and the count of problems left out is never cut off while it fits."""
+    def kind(p: str) -> str:  # the problem without its file, links, numbers and quoted text (a repr, escapes and all)
+        p = re.sub(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"", "", p)
+        p = re.sub(r"\[\[[^\]]*\]\]", "", p)
+        return re.sub(r"\d+", "", re.sub(r"\S+\.md", "", p))
+
+    def note(told: list[str]) -> str:
+        more = len(problems) - len(told)
+        return "; ".join(told) + (f" ... ({more} more of these)" if more else "")
+
+    firsts, seconds, seen = [], [], set()
+    for p in problems:
+        (seconds if kind(p) in seen else firsts).append(p)
+        seen.add(kind(p))
+    chosen = (firsts + seconds)[:max(keep, min(len(firsts), 6))]
+    if len(note(chosen)) <= limit:
+        return note(chosen)
+    told: list[str] = []
+    for p in chosen:  # in order; each problem that still fits, with the count after it, is told
+        if len(note(told + [p])) <= limit:
+            told.append(p)
+    if told:
+        return note(told)
+    suffix = note(chosen[:1])[len(chosen[0]):]  # no problem fits whole: the first is cut, its count kept
+    if limit <= len(suffix):  # no room for any of it: the count alone, every problem in it
+        return note([])[:limit]
+    return chosen[0][:limit - len(suffix)] + suffix
 
 
 def ownership_problems(ctx: Context, task: WriterTask, wt: Path, head: str, changed: list[str]) -> list[str]:
@@ -279,8 +315,13 @@ def ownership_problems(ctx: Context, task: WriterTask, wt: Path, head: str, chan
             after = after_file.read_text() if after_file.exists() else ""
             if not after or outside_markers(after) != outside_markers(before) or "current-picture:start" not in after:
                 problems.append(f"changed {rel} outside its current-picture markers")
-            elif picture_lines(after) > PICTURE_MAX_LINES:
+                continue
+            # every problem with the picture, so one retry can fix them all
+            if picture_lines(after) > PICTURE_MAX_LINES:
                 problems.append(f"{rel}: current picture is over {PICTURE_MAX_LINES} lines")
+            if plain := plain_picture_lines(after):
+                problems.append(f"{rel}: every current-picture line must be a list item ending with its source tag; "
+                                f"not {plain[0].strip()[:60]!r}")
             continue
         if task.lifecycle_dirs and path.split("/")[0] in task.lifecycle_dirs and len(path.split("/")) == 2:
             before = gitops.show(wt, head, rel)
@@ -327,6 +368,8 @@ def run_parallel(ctx: Context, tasks: list[WriterTask]) -> dict[str, TaskOutcome
     def one(t: WriterTask) -> TaskOutcome:
         ctx.set_task(t.task_id, status="running", phase=t.phase)
         res = execute(ctx, t)
+        if res.ok and t.after_merge:  # before the task is marked done, so a stop in between reruns it
+            t.after_merge()
         st = ctx.task_state(t.task_id)
         ctx.set_task(t.task_id, status="done" if res.ok else "failed", reason=res.reason,
                      attempts=st.get("attempts", 0) + res.attempts, cost=round(st.get("cost", 0) + res.cost, 6))
@@ -347,6 +390,27 @@ def lint_changed(ctx_manifest: Manifest, wiki: Path, changed: list[str], rules=(
     paths = {c[len("wiki/"):] for c in changed if c.startswith("wiki/")}
     findings = check_mod.run_checks(wiki, ctx_manifest)
     return [str(f) for f in findings if f.severity == "error" and f.rule in rules and f.path in paths]
+
+
+def survival_problems(wiki: Path, changed: list[str]) -> list[str]:
+    """Every line already filed in a changed per-unit file is still there, unchanged or with only valid_to or
+    retracted added (SPEC: a fact line is never deleted). wiki/ is a worktree's, compared with its HEAD."""
+    wt = Path(wiki).parent
+    head = gitops.head(wt)
+    problems = []
+    for rel in changed:
+        path = rel[len("wiki/"):] if rel.startswith("wiki/") else rel
+        if check_mod.kind_of(path) not in check_mod.TAGGED_DIRS:
+            continue
+        before = gitops.show(wt, head, rel)
+        if before is None:
+            continue  # a new file
+        after = (wt / rel).read_text() if (wt / rel).exists() else ""
+        for n, line in check_mod.lost_lines(before, after):
+            problems.append(f"{rel}: filed line {n} was changed or removed; a filed line may only gain valid_to or "
+                            "retracted in its tag (its text, unit, as-of and section stay as they are), so to correct "
+                            f"it add retracted and file the correction as a new line in addenda/: {line.strip()[:70]!r}")
+    return problems
 
 
 def input_folder(ctx: Context, name: str, files: dict[str, Path | str]) -> Path:
@@ -405,9 +469,11 @@ def extract_tasks(ctx: Context, batches: dict[str, list[str]], phase: str) -> li
                     for u in units:
                         (wiki / d / f"{u}.md").unlink(missing_ok=True)
 
-        def validate(wiki: Path, changed: list[str], units=units):
+        def validate(wiki: Path, changed: list[str], units=units, phase=phase):
             m = ctx.manifest()
             problems = [f"no notes/{u}.md" for u in units if not (wiki / "notes" / f"{u}.md").exists()]
+            if phase == "check":  # Check verifies what Extract filed; it never rewrites it
+                problems += survival_problems(wiki, changed)
             return problems + lint_changed(m, wiki, changed)
 
         tasks.append(WriterTask(
@@ -436,7 +502,7 @@ def resolve_task(ctx: Context) -> WriterTask:
     limit = int(ctx.cfg.runner("resolve_limit", 10))
 
     def validate(wiki, changed):
-        problems = lint_changed(ctx.manifest(), wiki, changed)
+        problems = survival_problems(wiki, changed) + lint_changed(ctx.manifest(), wiki, changed)
         new = 0
         for rel in changed:
             if rel.startswith("wiki/open_questions/") and (wiki.parent / rel).exists():
@@ -508,20 +574,50 @@ def link_task(ctx: Context) -> WriterTask | None:
     )
 
 
-def compile_tasks(ctx: Context, slugs: list[str]) -> list[WriterTask]:
+def compile_tasks(ctx: Context, slugs: list[str], facts_sha: dict[str, str] | None = None) -> list[WriterTask]:
+    """One Compile task per group of pages. The groups are kept in state.json, so a resumed build reruns a failed
+    group under its own id, and a group made on resume never takes the id of one that finished earlier. Once a
+    group's pictures are merged, its pages' facts_sha are recorded, so a build stopped later in the phase does not
+    pay for that group again on resume."""
     size = int(ctx.cfg.runner("compile_group", 10))
-    groups = [slugs[i:i + size] for i in range(0, len(slugs), size)]
+    saved: dict[str, list[str]] = dict(ctx.state.get("compile_groups") or {}) if ctx.state is not None else {}
+    left = list(slugs)
+    groups: dict[str, list[str]] = {}
+    for tid, group in sorted(saved.items()):
+        if ctx.task_state(tid).get("status") == "done":
+            continue  # its pages were written; any that need a picture again get a new group
+        pending = [s for s in group if s in left]
+        if pending:
+            groups[tid] = pending
+            left = [s for s in left if s not in pending]
+    n = max((int(tid.rsplit("-", 1)[1]) for tid in saved), default=0)
+    for i in range(0, len(left), size):
+        n += 1
+        groups[f"compile-{n:02d}"] = left[i:i + size]
+    if ctx.state is not None and groups:
+        ctx.state["compile_groups"] = {**saved, **groups}
+        ctx.save_state()
+    def validate(wiki, changed):
+        return lint_changed(ctx.manifest(), wiki, changed, rules=("tag",))
+
+    def recorder(pages: set[str]) -> Callable[[], None]:
+        def after_merge() -> None:
+            with ctx.page_lock:
+                normalize_pictures(ctx.wiki, sorted(pages))
+                if facts_sha is not None:
+                    m = ctx.manifest()
+                    for page in pages:
+                        m.entities[Path(page).stem] = {"facts_sha": facts_sha.get(Path(page).stem)}
+                    ctx.save_manifest(m)
+        return after_merge
+
     tasks = []
-    for n, group in enumerate(groups, 1):
+    for tid, group in groups.items():
         pages = {f"entities/{s}.md" for s in group}
-
-        def validate(wiki, changed):
-            return lint_changed(ctx.manifest(), wiki, changed, rules=("tag",))
-
         tasks.append(WriterTask(
-            task_id=f"compile-{n:02d}", phase="compile", role="compile", prompt="compile",
+            task_id=tid, phase="compile", role="compile", prompt="compile",
             task_text="Compile: write the Current picture of these pages: " + ", ".join(sorted(pages)) + ".",
-            marker_pages=pages, validate=validate,
+            marker_pages=pages, validate=validate, after_merge=recorder(pages),
         ))
     return tasks
 
@@ -556,9 +652,11 @@ def catalog(ctx: Context) -> str:
         if check_mod.kind_of(path) not in ("notes", "addenda"):
             continue
         for s in parse_sections(text):
-            if s.heading == RED_FLAGS and s.facts:
+            # a retracted red flag was withdrawn: it stays on record in its unit's file, but is not ranked
+            live = [x for x in s.facts if not (fact_tag(x) or {}).get("retracted")] if s.heading == RED_FLAGS else []
+            if live:
                 out.append(f"## from {path}")
-                out += s.facts
+                out += live
                 out.append("")
     return "\n".join(out) + "\n"
 
@@ -590,15 +688,20 @@ def phase_compile(ctx: Context, phase_no: int = 7) -> list[str]:
     ctx.save_manifest(m)
     ctx.commit(f"{ctx.command} {ctx.run_id}: phase {phase_no} compile (program pages)")
     log(f"  pages written {len(res.written)}, removed {len(res.removed)}, need a current picture {len(res.needs_picture)}")
-    tasks = compile_tasks(ctx, res.needs_picture)
+    tasks = compile_tasks(ctx, res.needs_picture, res.facts_sha)
     results = run_parallel(ctx, tasks)
     failed = [t.task_id for t in tasks if ctx.task_state(t.task_id).get("status") != "done"]
     m = ctx.manifest()
+    done_pages = []
     for t in tasks:
         if ctx.task_state(t.task_id).get("status") == "done":
             for page in t.marker_pages or ():
                 slug = Path(page).stem
                 m.entities[slug] = {"facts_sha": res.facts_sha.get(slug)}
+                done_pages.append(page)
+    # each group recorded its pages as it merged (compile_tasks); this pass repeats that for every done group
+    # new pictures link entities by their slug, as kept pictures already do (compile_pages)
+    normalize_pictures(ctx.wiki, sorted(done_pages))
     for slug, sha in res.facts_sha.items():
         m.entities.setdefault(slug, {"facts_sha": None})
     ctx.save_manifest(m)

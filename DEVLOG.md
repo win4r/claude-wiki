@@ -348,6 +348,233 @@ M6 starts when the owner supplies documents.
 
 Cost: $15.61 (allowance $28): build $11.44 and 11 evals $4.17. Total spent so far: $17.15 of $50.
 
+## After M5: memory-components audit fixes (2026-11-09)
+
+The owner asked for an audit of the tool against Anthropic's "The components of agent memory" (2026-11-06).
+It rated 34 components: 4 implemented, 27 partial and 3 missing, 13 of them by SPEC's design. It also found
+8 defects. The owner approved fixing the defects that need no paid run, and logging the rest as proposals.
+Four adversarial review rounds followed; in the first three, each finding had a refuter:
+- Round 1 raised 26 distinct findings. 22 held up and are fixed, refuters rejected 3, and 1 was the reviewer's
+  note on `[[accel]]`, which moved two lines (below).
+- Round 2 confirmed all 22 fixes and raised 18 more, all confirmed. One was medium: a regression of the
+  compile-resume fix. The other 17 were low: edge cases in the eval's git use, the retry note and lost_lines'
+  recursion, the template's wording, and 8 guards no test pinned. All are fixed. Each new test was checked
+  against the mutation it targets, and all 21 mutants were caught.
+- Round 3 confirmed all 18 round-2 fixes and raised 20 more findings; refuters rejected 2. Two of the 18 that
+  held were medium, and both came from round 2's own fixes:
+  - lost_lines' pair cache kept every pair it compared: 545 MB on a 100 KB page pair of lines that differ only
+    in their dates.
+  - The eval's pre-check used `git check-ignore`, which reads names as globs, so an ignored question file
+    named like `private-[1].toml` passed when a tracked file matched the glob.
+  The 16 low ones were edge cases in the retry note, the eval and the manifest's temporary file, plus 8 test
+  gaps. Round 4 fixed both mediums, 13 of the lows, and part of 2 more. The rest need a design choice and are
+  proposals below.
+- Round 4 was to be the last, so only its own regressions were to be fixed. It checked its fixes with one
+  verifier per area, on the changed lines only. A refuter would have taken any medium or high regression of
+  round 4's own; there was none. It raised 7 findings:
+  - Medium, from before round 4: the fixture gave a test the owner's key, PATH and claude on the live marker
+    alone. SPEC.md:328 says live tests are skipped unless WIKI_LIVE=1, but only test_live_smoke carried that
+    skip, so a live test written without one would have spent money under plain `pytest`. Fixed anyway, since
+    it guards money: the fixture now skips every live test unless WIKI_LIVE=1. A live test with no skipif of
+    its own fails the suite if that skip is ever lost.
+  - Low, from round 4 and fixed: a retry note that fit whole was cut where round 3 told it whole, and at a tiny
+    limit the bare count came out one short. The memory test failed when the harness already traced memory.
+    A lost_lines comment claimed one byte per pair compared, but each row is as wide as its group. run_eval's
+    own mode check had no test.
+  - Low, a proposal: no offline test pins what the live branch restores.
+  After the fixes, each of 50 mutants, aimed at round 4's changes and at the guards before them, was caught by
+  the test written for it.
+
+What changed in the tool:
+- **Links resolve through `_aliases.md`** (defects 6 and 7). `grammar.LinkResolver` maps a link in a unit's
+  per-unit file to the page its heading's facts are on. It tries the unit's own heading first (a
+  `<unit>#<heading>` row, or a bare row when the unit files facts under that heading), then a slug, then a
+  heading proposed bare; a heading two rows claim stays unresolved. Compile attaches each relations line to
+  every slug its links reach, and the Sources cell names the links used (``lines naming `[[klarna-bank]]` ``).
+  `wiki check` counts these links in one note instead of warning. Heading links on README, escalations or
+  entity pages still warn, because readers cannot follow them there.
+- **Current pictures hold list items only** (defect 1). When compile renders a page, and again after each
+  Compile run, `compile.normalize_picture` points every picture link at a slug. A link resolves in the units
+  the line cites, and links inside code spans are left alone. It also drops untagged plain lines; a plain line
+  with a source tag stays, for `wiki check` to report. The Compile validator rejects a plain line, and `wiki
+  check` warns on plain lines and on pictures over 30 lines. A rejected picture names every problem it has.
+  Compile's prompt and steering item 6(b) no longer ask for a sections line; the template `_schema.md` for new
+  workspaces says the same. README rule 3 and the workspace CLAUDE.md template point readers to the Sources
+  table.
+- **A filed fact line can't be reworded or removed** (defect 2). `check.lost_lines`, which `check --against`
+  now shares, compares every filed line of a changed per-unit file with the task worktree's HEAD. It pairs
+  identical lines first and then the rest by a maximum matching, so moving lines never counts as losing one.
+  The matching works on distinct line texts and has no recursion, so a file with a thousand identical lines
+  takes milliseconds; the first version raised RecursionError there. For each base text a search reaches, it
+  keeps one byte per current text of the same group, recording what comparing the two gave. It remembers a
+  text whose search failed, since no later pairing can open a path for it. On 100 KB page pairs, 1,062 copies
+  of a dropped line take 0.07 s, where round 3 took 52 s, and 1,818 lines that differ only in their dates peak
+  under 30 MB, where round 3 used 545 MB. It gives the same results as the first version on 12,000 random inputs,
+  and the suite checks it against a brute-force matching on 1,800 more.
+  `lifecycle_only_added` now guards every tag on a line, a CONFLICT line's first tag included. The Check,
+  Resolve and dream-apply validators reject a run that rewords, moves to another unit or removes a filed
+  line.
+  - Check's rule 4 no longer invites "fixing" a tag the program accepted: in the core build, Check runs had
+    rewritten `section: 7-Indebtedness` and dropped `section: not numbered in this document`.
+  - The hedge rule now says to retract the line and file the fact as the unit states it in addenda. It used to
+    say "reword in place", which contradicted rule 4.
+  - Resolve's and dream apply's prompts now state the rule too.
+  - Replayed on the core build's history, the guard would have rejected the Check runs for 7 units: 36 lines,
+    24 of them rewordings and 12 contract tags. It would have rejected none of Resolve's edits.
+- **A retry hears every reason it was rejected.** The retry note used to be the first 3 problems, so a run
+  rejected for changed lines and for a bad tag heard only about the lines. It now takes the first problem of
+  each kind before any repeat. A quoted line holding both quote kinds, or a `[[link]]`, no longer makes a kind
+  of its own. A list that fits the 2000-character note is told whole. Otherwise problems are told in order,
+  and one too long for the room left is passed over for the ones after it. When none fits whole, the first is
+  cut so the "(N more of these)" count stays whole.
+- **A resumed compile reruns the group that failed** (pre-existing bug). Groups were numbered from compile-01
+  on every entry to phase 7, so on resume a failed group could take the id of a group that had finished. It
+  was then skipped as "done earlier", and its new facts_sha recorded with a stale picture. The groups are now
+  kept in state.json. Each group also records its pages' facts_sha and normalizes their pictures as soon as it
+  merges. So a build stopped hard later in the phase (Ctrl-C, or a git error in a worker) does not pay for the
+  finished groups again on resume. manifest.json is now written through a temporary file, so a stop mid-write
+  cannot leave it unreadable, and a failed write removes the temporary file.
+- **Retracted red flags leave the index catalog** (part of defect 5), and the escalations rules say so.
+- **Dream transcripts show what the reader did:**
+  - each tool call, with its arguments and the first 8 lines of its result;
+  - a `flags:` line covering refused, citation retry (including a retry that failed), unknown units,
+    malformed tags and a non-success outcome;
+  - after a successful citation retry, the rejected first attempt.
+  Streams are split on newlines only, so a U+2028 in a document no longer drops an event. Ask records keep both
+  runs' token usage, the first answer and its stream, or the failed retry's outcome and stream.
+- **Eval reports** add a score per question kind, median tokens per answer, and the commit the answers read
+  (`summary.wiki_commit`). For that claim to hold, `wiki eval` now refuses to start while `repo/wiki` or
+  `manifest.json` has uncommitted changes or a build is unfinished. Untracked files count whatever
+  status.showUntrackedFiles says. A sources-only eval reads no wiki, so it runs anyway, and its report names no
+  wiki commit.
+  - The eval commits only its report files and a question file kept in repo/, and takes their names literally;
+    before, it committed every change in the repo.
+  - It refuses before any run if git would ignore one of those files. Before, every run was paid for, then the
+    commit failed and left the reports staged. The check is the commit's own literal `git add`, dry-run, one
+    path at a time.
+  - A mistyped, repeated or empty `--modes` is refused before the estimate. Before, the valid modes' runs were
+    paid for and the eval then failed.
+  - Dreams' clean-repo check counts untracked files the same way. Under git's default settings, nothing changes
+    for them.
+- **Offline tests cannot reach the real claude.** At import, tests/conftest.py takes the owner's key out of the
+  environment, and points WIKI_CLAUDE_BIN and the front of PATH at a stub that refuses. A test that undoes its
+  fixtures therefore falls back to the stub. A live test is skipped unless WIKI_LIVE=1, whatever skipif it
+  carries, and only then gets the owner's values back (incident below).
+- **Streams survive a rerun** (defect 8). `runner.run` renames an earlier run's `.jsonl`, `.stderr`,
+  `.cmd.json` and `.violations.txt` to `<task>.prevN.*`. The audit suggested appending instead, but one file
+  per run keeps each stream a single session, as the cost and transcript readers assume.
+
+Changes from SPEC, with SPEC.md unchanged:
+- SPEC.md:92 says links are bare slugs. The extractors link the headings they propose, so the program
+  resolves those links through `_aliases.md` instead of rewriting per-unit files. Agents still may not
+  repoint links (SPEC.md:246). Only Current pictures, which the program owns, are rewritten to slugs.
+- Pictures hold list items only, and steering item 6(b) (SPEC.md:254) no longer asks for a last plain line.
+  That line followed from M5's Sources tables. The sha-pinned `_schema.md` in existing workspaces still allows
+  it, so compile.md says pictures hold list items "even where an older _schema.md allows a last plain line".
+- The fact-line guard runs per writer task, before merge, rather than as a build-level `check --against`.
+  Re-extraction legitimately replaces a changed unit's files (SPEC.md:188), so a build-level comparison would
+  reject correct builds.
+
+Core workspace, offline, in two commits of its repo, 8cb355a and 8fb2824 (owner-approved, no paid runs):
+- The program re-rendered all 296 entity pages:
+  - 296 navigation lines dropped;
+  - 26 picture links repointed to slugs;
+  - 119 relations lines newly attached across 42 pages (the audit counted 114 alias-named lines; a line can
+    reach two pages);
+  - two `[[accel]]` lines in 8k-amended-agreement moved from accel to accel-leaders-3, because that unit's
+    `## accel` is Accel Leaders 3.
+- manifest.json is untouched, so 44 slugs keep their old facts_sha and get a fresh picture at the next paid
+  compile. That is 5 Compile groups, about $0.13 at the ledger's mean compile run ($0.026), and at most about
+  $1.10. No estimate shows it yet.
+- README.md rules 3 and 9, and step 3 of the workspace's CLAUDE.md, were edited by hand.
+- `wiki check`: 0 errors and 0 warnings (was 173). 26 notes, among them 147 links that resolve through
+  aliases.
+- The quickstart workspace is unchanged. Under the new rule its `wiki check` shows 46 picture warnings, one
+  per sections line; its next build drops those lines.
+
+Left as found:
+- escalations.md still ranks the 7 retracted red flags until the next Index run. It is an agent-owned page,
+  so I left it unedited by hand.
+- The audit found 3 pictures that cite retracted lines.
+- metrics/8k-closing.md:7 keeps the wrong basis for the offer expiry, with only a correcting line after it.
+  A fix touches one line, so the wrong line stays.
+- The 24 lines that Check reworded in the core build stay reworded; the guard applies from the next build.
+- 53 lines state $44.00 and none has `valid_to` (defect 3).
+- Re-extraction still deletes a changed unit's lines (defect 4).
+- relations/8k-amended-agreement.md links `[[accel]]` twice for Accel Leaders 3. Compile files those lines on
+  accel-leaders-3, but a reader who follows the link lands on accel. Agents own the per-unit files and links
+  there are never repointed (SPEC.md:246). The a-r-merger-agreement picture keeps one such link, because on a
+  page a slug stays a slug. The next refresh of accel-leaders-3's picture may copy it too.
+- Normalizing a picture drops the untagged continuation of a wrapped item. The core pictures had none: all 296
+  dropped lines were navigation lines. The Compile validator rejects wrapped items.
+
+Incident: a round-3 refuter's scratch test called monkeypatch.undo(), which also undid the fake-claude fixture,
+so its 7 resumed builds ran the real claude 14 times with the owner's API key. They ran with the runner's
+restricted flags and a private config dir. By the cost the runs reported, they spent about $0.04 to $0.11, in
+no ledger: theirs were in pytest temp dirs, since deleted. Both workspace ledgers are unchanged, last written on
+2026-11-08, and no key appears in any file under the project or the scratchpad. The suite's new guard (above)
+closes the hole. Round 4's checks ran with a fake key and with a canary as the only claude on PATH. The canary
+logged just 3 `--version` calls, which one reviewer made to it on purpose, and both ledgers kept their mtime
+and size throughout.
+
+Proposals, grouped by what each needs:
+- A SPEC change:
+  - LESSON, PATTERN, SUPERSEDED and PITFALL finding kinds for dream analysts, and a small lessons page
+    that dreams own (SPEC.md:289-290). Today every finding becomes a fact fix.
+  - Settle SPEC.md:96 against :188. Keep a changed unit's old lines with `valid_to` instead of deleting them
+    on re-extraction.
+  - A verified marker on fact lines, set by Check, and a policy that ask and compile rely on verified lines.
+  - Preload the "Where to start" map into the ask prompt, instead of the reading order at SPEC.md:272.
+  - An owner feedback command whose notes feed dreaming alongside ask transcripts.
+  - Alias merges, and lifecycle marks that can be reversed. Today `_aliases.md` is append-only, and
+    valid_to and retracted are one-way.
+  - A path for the 563 open questions that no document answers, such as a backlog page or an UNRESOLVABLE
+    sweep.
+  - Mark supersession across documents, such as the 53 $44.00 lines.
+  - Guard contract quote text. SPEC guards fact lines only, so a Check run may still change a `>` quote
+    while keeping its tag line.
+- A paid run:
+  - A `wiki tune` loop that reflects on eval failures and proposes prompt edits, scored on held-out
+    questions.
+  - Prompts conditioned on the model: `render()` takes no model today.
+  - A purpose-first ask_wiki variant, evaluated against the current recipe.
+  - Teach the ask and compile prompts what `retracted` means. Neither mentions it.
+  - Refresh the 44 pictures, and the 3 that cite retracted lines.
+- Offline, later:
+  - A configurable cap on the Borges ratio that fails a build, with the ratio always reported.
+  - Checks for the 40-line caps on `_index.md`'s map and README.md.
+  - Dream cadence driven by access counts and by facts likely to change.
+  - Growth counters per build.
+  - A lint that checks contract quotes against their units.
+  - Reject a Compile run that leaves one of its pages' pictures blank. Today such a run counts as done, and the
+    page gets a new group on the next build.
+  - Refuse an eval while a merge or cherry-pick is unfinished. Today it pays for every run and then cannot
+    commit, which a failed `wiki dream --accept` can cause. dream --accept could also run `git merge --abort`
+    when its merge fails. Whether to refuse a revert, a paused rebase or unmerged entries too is the open
+    choice.
+  - Word the ignored-file refusal by what is blocked. A rule on the reports needs a negation such as
+    `!eval/report-*`; only a blocked question file can move outside repo/. Refuse up front, in plain words,
+    when repo/eval is a symbolic link, instead of passing git's error on.
+  - Remove a stale manifest.json.tmp. A kill during the write can still leave one for the next commit. Where to
+    remove it (when the lock is taken, when a build starts, or in commit_all) is the choice; build start alone
+    misses `wiki add`.
+  - Stop starting retries once a build is interrupted. After Ctrl-C, a worker still started and paid for its
+    run's retry.
+  - lost_lines still takes about 9 s on an adversarial 100 KB page pair whose 1,818 lines share one fact text
+    and differ only in their dates, since it compares every pair once. An index by lifecycle values would
+    cut that. Its rows are as wide as a group even when a search compares one pair in them: 2.25 MB for 2,999
+    comparisons on a 1,500-line page. A row could stay a small dict until it fills.
+  - An offline test of what the live branch restores, such as a pytester run with a fake owner key. Today only
+    a live run checks it; a broken restore fails safe, at the stub.
+  - test_run_failures[badtools] failed when three suites ran at once. Its fake run sleeps 5 s for the runner to
+    stop it; when the stop lands later, the run finishes and is charged its reported cost, not the full cap.
+    The charge is right either way, but the test's expectation depends on timing.
+  - retry_reason's kind() strips `\S+\.md` from each problem, which takes quadratic time on a long run of
+    characters with no spaces.
+
+Tests: 151 (149 passed, 2 live tests skipped). Cost: $0.00 by the ledgers, plus about $0.04 to $0.11
+unledgered (the incident above). Total spent so far: $17.15 of $50 by the ledgers; at most $17.26 in all.
+
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
 M2, M3 and M4 each end in paid runs, and M0's live checks come first, so these milestones are not done. Their

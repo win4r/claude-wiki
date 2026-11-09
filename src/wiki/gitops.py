@@ -35,7 +35,37 @@ def current_branch(repo: Path) -> str:
 
 
 def is_clean(repo: Path) -> bool:
-    return git(repo, "status", "--porcelain").strip() == ""
+    # untracked files count whatever status.showUntrackedFiles says
+    return git(repo, "status", "--porcelain", "--untracked-files=all").strip() == ""
+
+
+def ignored(repo: Path, paths: list[str]) -> list[str]:
+    """Those of these paths (relative to the repo, taken literally, present or not) that commit_paths could not add
+    because a .gitignore rule or an excludes file ignores them. Each path is tried with the same add, dry-run, so
+    the answer is git's own and needs none of its output read."""
+    found = []
+    for p in paths:
+        proc = subprocess.run(["git", "-C", str(repo), "-c", "advice.addIgnoredFile=false", "--literal-pathspecs",
+                               "add", "--dry-run", "--ignore-missing", "--", p], capture_output=True, text=True)
+        if proc.returncode == 1:  # git add refuses an ignored path, and only that, with exit 1
+            found.append(p)
+        elif proc.returncode != 0:
+            raise WikiError(f"git add --dry-run -- {p} failed: {proc.stderr.strip()}")
+    return found
+
+
+def commit_paths(repo: Path, paths: list[str], message: str) -> bool:
+    """Commit only these paths (relative to the repo, taken literally, never as globs), whatever else is changed
+    or staged; False when they hold no change. If the commit fails, the paths are unstaged again."""
+    try:
+        git(repo, "--literal-pathspecs", "add", "--", *paths)
+        if not git(repo, "--literal-pathspecs", "diff", "--cached", "--name-only", "--", *paths).strip():
+            return False
+        git(repo, "--literal-pathspecs", "commit", "-q", "-m", message, "--", *paths)
+    except WikiError:
+        git(repo, "--literal-pathspecs", "reset", "-q", "--", *paths, check=False)
+        raise
+    return True
 
 
 def commit_all(repo: Path, message: str) -> bool:

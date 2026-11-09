@@ -102,23 +102,36 @@ def ask_once(ws, cfg, runner: Runner, question: str, mode: str, run_dir: Path, t
     spec = spec_for(ws, cfg, mode, question, run_dir, task_id, budget, model, command)
     rr, units, unknown, malformed = _run_and_read(ws, runner, spec)
     cost, turns, first_unknown = rr.cost_usd, rr.turns, []
+    usage = dict(rr.usage or {})
+    first = failed = None
     left = budget - rr.cost_usd
     if unknown and rr.ok and left >= float(cfg.runner("min_retry_usd", 0.01)):
         retry = dataclasses.replace(spec, task_id=f"{task_id}-cite", budget_usd=left,
                                     task=spec.task + "\n\n" + citation_feedback(ws, unknown))
         rr2, units2, unknown2, malformed2 = _run_and_read(ws, runner, retry)
         cost, turns = cost + rr2.cost_usd, (turns or 0) + (rr2.turns or 0)
+        for key, n in (rr2.usage or {}).items():
+            usage[key] = usage.get(key, 0) + n
+        first_unknown = unknown  # it was asked again, whatever came of it
         if rr2.ok and rr2.text:
-            first_unknown = unknown
+            first = rr
             rr, units, unknown, malformed = rr2, units2, unknown2, malformed2
+        else:
+            failed = rr2
     record = {
         "time": datetime.now(UTC).isoformat(timespec="seconds"),
         "command": command, "question": question, "mode": mode, "model": model, "answer": rr.text,
         "outcome": rr.outcome, "cost_usd": cost, "session_id": rr.session_id, "turns": turns,
+        "usage": usage,  # tokens of every run this answer took
         "cited_units": units, "unknown_units": unknown, "malformed_tags": malformed,
         "citation_retry": first_unknown,
         "refused": refused(rr.text), "stream": str(rr.stream_path),
     }
+    if first is not None:  # the rejected first attempt, kept so a dream sees what that reader read
+        record["first_answer"], record["first_stream"] = first.text, str(first.stream_path)
+    if failed is not None:  # the retry gave no answer, so the first one stands
+        record["retry_outcome"] = failed.outcome if not failed.ok else "an empty answer"
+        record["retry_stream"] = str(failed.stream_path)
     (Path(run_dir) / f"{task_id}.json").write_text(json.dumps(record, indent=1, ensure_ascii=False))
     return record
 

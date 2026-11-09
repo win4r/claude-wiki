@@ -225,3 +225,20 @@ def test_manifest_diffs(tmp_path):
     path = tmp_path / "manifest.json"
     m.save(path)
     assert json.loads(path.read_text())["units"] == Manifest.load(path).units
+
+
+def test_a_manifest_save_that_fails_keeps_the_old_manifest_and_leaves_no_partial_copy(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    (tmp_path / "repo").mkdir()
+    path = tmp_path / "repo" / "manifest.json"
+    Manifest.new("old").save(path)
+    before = path.read_text()
+
+    def full_disk(self, *args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Path, "replace", full_disk)
+    with pytest.raises(OSError, match="No space"):
+        Manifest.new("new").save(path)
+    assert path.read_text() == before and [p.name for p in path.parent.iterdir()] == ["manifest.json"]

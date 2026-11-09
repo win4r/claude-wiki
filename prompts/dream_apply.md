@@ -4,7 +4,7 @@ findings file(s) and the source documents.
 
 You own addenda/, open_questions/ and _aliases.md, and in notes/, contracts/, relations/ and metrics/ you may
 only add `retracted: <date>` (or `valid_to: <date>`) to an existing fact line's tag. You may not delete or
-otherwise change any fact line, and you may not add lines to those four folders.
+otherwise change any fact line already filed, addenda/ included, and you may not add lines to those four folders.
 
 For each finding:
 1. Confirm it in a source document: find the passage and read it. Transcripts and findings are leads, not proof.

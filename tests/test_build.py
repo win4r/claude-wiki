@@ -263,3 +263,350 @@ def test_unspent_cap_moves_to_unfinished_tasks(ws):
     ctx.rebalance()  # nothing spent on the ledger for build-x: half of 10 * 0.9 for link and index
     assert ctx.shares["link"] == pytest.approx(2.25) and ctx.shares["index"] == pytest.approx(2.25)
     assert ctx.shares["extract-b01"] == 4.0
+
+
+def test_check_that_rewords_a_filed_line_is_rejected_and_retried(loaded, monkeypatch):
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "reword:check:1")
+    assert build(loaded) == 0
+    check_ok(loaded)
+    vio = sorted(loaded.runs.glob("build-*/check-*.violations.txt"))
+    assert len(vio) == 1 and "may only gain valid_to or retracted" in vio[0].read_text()
+    assert "Reworded" not in "".join(p.read_text() for p in (loaded.wiki / "notes").glob("*.md"))
+    # the retry is told why: the problem text is in its task
+    retry = json.loads(sorted(loaded.runs.glob("build-*/check-*-retry.cmd.json"))[0].read_text())
+    assert "file the correction as a new line in addenda" in " ".join(retry["argv"])
+
+
+def test_compile_picture_with_a_plain_line_is_rejected_and_retried(loaded, monkeypatch):
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "plainpic:compile:1")
+    assert build(loaded) == 0
+    vio = sorted(loaded.runs.glob("build-*/compile-*.violations.txt"))
+    assert len(vio) == 1 and "must be a list item" in vio[0].read_text()
+    findings = run_checks(loaded.wiki, Manifest.load(loaded.manifest_path), repo=loaded.repo)
+    assert not [f for f in findings if f.rule == "picture"], [str(f) for f in findings if f.rule == "picture"]
+
+
+def test_index_catalog_leaves_out_retracted_red_flags(loaded):
+    from wiki.phases import Context, catalog
+
+    assert build(loaded) == 0
+    flagged = [p for p in sorted((loaded.wiki / "notes").glob("*.md")) if "## red-flags\n- " in p.read_text()]
+    assert flagged
+    p = flagged[0]
+    text = p.read_text()
+    line = text.split("## red-flags\n", 1)[1].splitlines()[0]
+    p.write_text(text.replace(line, line[:-1] + " | retracted: 2024-12-31]", 1))
+    cat = catalog(Context(loaded, "test", "catalog-test", loaded.repo))
+    assert line[:-1] not in cat  # neither the line nor its retracted form
+    others = [x for q in flagged[1:] for x in q.read_text().split("## red-flags\n", 1)[1].splitlines()[:1]]
+    assert all(x in cat for x in others)
+
+
+def test_a_resumed_compile_reruns_the_failed_group_under_its_own_id(loaded, monkeypatch):
+    from conftest import set_runner
+    from wiki.compile import compile_pages
+
+    set_runner(loaded, compile_group=2, concurrency=1)
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "fail:compile@entities/gamma-lenders.md")
+    assert build(loaded) == 2
+    groups = state_of(loaded)["compile_groups"]
+    failed = next(t for t, pages in groups.items() if "gamma-lenders" in pages)
+    assert failed != "compile-01" and state_of(loaded)["tasks"][failed]["status"] == "failed"
+    runs_before = len(Ledger(loaded.ledger_path).entries())
+    monkeypatch.delenv("WIKI_FAKE_MISBEHAVE")
+    assert build(loaded, resume=True) == 0
+    rerun = [e["task_id"] for e in Ledger(loaded.ledger_path).entries()[runs_before:] if e["phase"] == "compile"]
+    assert rerun == [failed]  # not a new compile-01 that the state calls done
+    page = (loaded.wiki / "entities" / "gamma-lenders.md").read_text()
+    assert "- Gamma Lenders provide a $2.3B term loan." in page.split("<!-- current-picture:end -->")[0]
+    m = Manifest.load(loaded.manifest_path)
+    assert compile_pages(loaded.wiki, {s: r.get("facts_sha") for s, r in m.entities.items()}).needs_picture == []
+    check_ok(loaded)
+
+
+def test_a_picture_a_compile_run_writes_links_slugs(loaded, monkeypatch):
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "aliaslink")
+    assert build(loaded) == 0
+    page = (loaded.wiki / "entities" / "acme.md").read_text()
+    assert "- Also filed as [[acme]]." in page and "[[acme-co]]" not in page
+    assert "[[acme-co]]" not in gitops.git(loaded.repo, "show", "HEAD:wiki/entities/acme.md")
+    check_ok(loaded)
+
+
+def test_resolve_that_rewords_a_filed_line_is_rejected_and_retried(loaded, monkeypatch):
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "reword:resolve:1")
+    assert build(loaded) == 0
+    vio = sorted(loaded.runs.glob("build-*/resolve.violations.txt"))
+    assert len(vio) == 1 and "may only gain valid_to or retracted" in vio[0].read_text()
+    assert "Rechecked" not in "".join(p.read_text() for p in (loaded.wiki / "addenda").glob("*.md"))
+    check_ok(loaded)
+
+
+def test_a_retry_hears_every_kind_of_problem():
+    from wiki.phases import retry_reason
+
+    changed = [f"wiki/contracts/x.md: filed line {n} was changed or removed: '- q {n}'" for n in range(13, 21)]
+    lint = ["ERROR addenda/x.md: line 5: fact line without a valid source tag: '- y' [tag]"]
+    reason = retry_reason(changed + lint)
+    assert "filed line 13" in reason and "fact line without a valid source tag" in reason
+    assert reason.endswith("(6 more of these)")
+    assert retry_reason(["a.md: one", "a.md: two"]) == "a.md: one; a.md: two"
+    # a quoted line holding both quote kinds is a repr with escapes; it is still one kind of problem
+    words = ["early", "late", "twice", "often", "again", "once", "today", "soon"]
+    both = [f"wiki/notes/x.md: filed line {n} was changed or removed: " + repr(f"- Acme's \"Board\" met {w}.")
+            for n, w in enumerate(words, start=1)]
+    tag = "ERROR addenda/x.md: line 6: malformed source tag '[source: u' [tag]"
+    reason = retry_reason(both + lint + [tag])
+    assert "fact line without a valid source tag" in reason and "malformed source tag" in reason
+    # the note fits the retry's room, and says how many problems it leaves out
+    long = [f"wiki/notes/x.md: filed line {n} was changed or removed: {'x' * 900!r}" for n in range(10)] + lint
+    cut = retry_reason(long, limit=2000)
+    assert len(cut) <= 2000 and "fact line without a valid source tag" in cut and cut.endswith("(9 more of these)")
+    # a long problem early in the list does not silence the short kinds after it
+    shape = ["wiki/notes/x.md: filed line 1 was changed or removed: " + "s" * 275,
+             "addenda/x.md: frontmatter name " + "n" * 1750, lint[0], tag,
+             "ERROR addenda/x.md: line 7: tag names unit 'zz', not this file's unit [tag]"]
+    reason = retry_reason(shape)
+    assert len(reason) <= 2000 and reason.endswith("(1 more of these)") and "frontmatter" not in reason
+    assert all(k in reason for k in ("filed line 1", "fact line without", "malformed source tag", "names unit"))
+    # when no problem fits whole, the first is cut and the count stays whole
+    reason = retry_reason(["a.md: " + "x" * 1984] * 3)
+    assert len(reason) == 2000 and reason.endswith("x ... (2 more of these)")
+    assert retry_reason(["x" * 2500]) == "x" * 2000
+    # a list that fits whole is told whole, though its first problem with a count after it would not fit
+    whole = ["a.md: " + "x" * 1983, "b.md: two"]
+    assert retry_reason(whole) == "; ".join(whole)
+    # with room for the count alone, the note is the count, and it counts every problem
+    assert retry_reason(["a" * 50, "b" * 50], limit=22) == " ... (2 more of these)"
+    # a link is part of a problem's text, not of its kind
+    pages = [f"ERROR   _index.md: entity page [[filler-{c}]] is not in the index [index]" for c in "abcdefgh"]
+    assert "unit 'beta-note'" in retry_reason(pages + ["ERROR   _index.md: unit 'beta-note' is not in the index [index]"])
+
+
+def test_a_rejected_picture_names_every_problem_it_has(tmp_path):
+    from wiki.grammar import MARK_END, MARK_START
+    from wiki.phases import WriterTask, ownership_problems
+
+    repo = tmp_path / "repo"
+    (repo / "wiki" / "entities").mkdir(parents=True)
+    page = repo / "wiki" / "entities" / "acme.md"
+    page.write_text(f"# acme\n{MARK_START}\n{MARK_END}\n## Sources\n")
+    gitops.init_repo(repo)
+    gitops.commit_all(repo, "base")
+    facts = "".join(f"- Fact {i}. [source: u1 | as-of: 2024-01-01]\n" for i in range(31))
+    page.write_text(f"# acme\n{MARK_START}\n{facts}Sections: From u1.\n{MARK_END}\n## Sources\n")
+    task = WriterTask("compile-01", "compile", "compile", "compile", "", marker_pages={"entities/acme.md"})
+    problems = ownership_problems(None, task, repo, gitops.head(repo), ["wiki/entities/acme.md"])
+    assert len(problems) == 2 and "over 30 lines" in problems[0] and "must be a list item" in problems[1]
+
+
+def test_a_compile_run_may_write_30_picture_lines_but_not_31(tmp_path):
+    from wiki.grammar import MARK_END, MARK_START
+    from wiki.phases import WriterTask, ownership_problems
+
+    repo = tmp_path / "repo"
+    (repo / "wiki" / "entities").mkdir(parents=True)
+    page = repo / "wiki" / "entities" / "acme.md"
+    page.write_text(f"# acme\n{MARK_START}\n{MARK_END}\n## Sources\n")
+    gitops.init_repo(repo)
+    gitops.commit_all(repo, "base")
+    task = WriterTask("compile-01", "compile", "compile", "compile", "", marker_pages={"entities/acme.md"})
+    for n, want in ((30, 0), (31, 1)):
+        facts = "".join(f"- Fact {i}. [source: u1 | as-of: 2024-01-01]\n" for i in range(n))
+        page.write_text(f"# acme\n{MARK_START}\n{facts}{MARK_END}\n## Sources\n")
+        assert len(ownership_problems(None, task, repo, gitops.head(repo), ["wiki/entities/acme.md"])) == want
+
+
+class HardStop(RuntimeError):
+    pass
+
+
+def test_a_build_stopped_hard_in_compile_resumes_only_the_groups_left(loaded, monkeypatch):
+    from conftest import set_runner
+    from wiki import phases
+
+    set_runner(loaded, compile_group=2, concurrency=1)
+    real = phases.execute
+
+    def execute(ctx, task):
+        if task.task_id == "compile-02":
+            raise HardStop("stopped hard")  # as a Ctrl-C or a git failure in a worker would stop it
+        return real(ctx, task)
+
+    monkeypatch.setattr(phases, "execute", execute)
+    with pytest.raises(HardStop):
+        build(loaded)
+    monkeypatch.setattr(phases, "execute", real)
+    st = state_of(loaded)
+    groups = st["compile_groups"]
+    left = sorted(t for t in groups if st["tasks"][t]["status"] != "done")
+    assert len(groups) == 3 and "compile-02" in left and len(left) < 3
+    m = Manifest.load(loaded.manifest_path)
+    for t in set(groups) - set(left):  # recorded as each group merged, before the stop
+        assert all(m.entities[s]["facts_sha"] for s in groups[t])
+    runs_before = len(Ledger(loaded.ledger_path).entries())
+    assert build(loaded, resume=True) == 0
+    rerun = [e["task_id"] for e in Ledger(loaded.ledger_path).entries()[runs_before:] if e["phase"] == "compile"]
+    assert rerun == left  # the groups that finished before the stop are not paid for again
+    assert len(state_of(loaded)["compile_groups"]) == 3
+    check_ok(loaded)
+
+
+def test_a_resumed_compile_gives_a_done_groups_blank_page_a_new_group(loaded, monkeypatch):
+    from conftest import set_runner
+    from wiki.grammar import MARK_END, MARK_START
+
+    set_runner(loaded, compile_group=2, concurrency=1)
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "fail:compile@entities/gamma-lenders.md")
+    assert build(loaded) == 2
+    monkeypatch.delenv("WIKI_FAKE_MISBEHAVE")
+    st = state_of(loaded)
+    groups = st["compile_groups"]
+    done = sorted(t for t in groups if st["tasks"][t]["status"] == "done")
+    failed = next(t for t in groups if "gamma-lenders" in groups[t])
+    blank = groups[done[0]][0]  # a page its done group left without a picture
+    p = loaded.wiki / "entities" / f"{blank}.md"
+    text = p.read_text()
+    p.write_text(text[:text.index(MARK_START) + len(MARK_START)] + "\n" + text[text.index(MARK_END):])
+    gitops.commit_all(loaded.repo, "a done run left a page blank")
+    runs_before = len(Ledger(loaded.ledger_path).entries())
+    assert build(loaded, resume=True) == 0
+    rerun = [e["task_id"] for e in Ledger(loaded.ledger_path).entries()[runs_before:] if e["phase"] == "compile"]
+    new = f"compile-{len(groups) + 1:02d}"
+    assert rerun == [failed, new] and not set(rerun) & set(done)
+    after = state_of(loaded)["compile_groups"]
+    assert after[new] == [blank] and all(after[t] == groups[t] for t in done)
+    assert "[source:" in p.read_text().split(MARK_END)[0]
+    check_ok(loaded)
+
+
+def test_compile_groups_that_merge_at_once_each_record_their_pages(loaded, monkeypatch):
+    """At concurrency 4 the groups' after_merge hooks may run at once. Here a hook that has loaded the manifest
+    waits up to half a second for a second hook to load it too, as it could without the lock; each still records
+    its pages, so a hard stop on the last group reruns only that group."""
+    import threading
+    import traceback
+
+    from conftest import set_runner
+    from wiki import phases
+
+    set_runner(loaded, compile_group=1, concurrency=4)
+    real_execute, real_parallel, real_load, real_save = phases.execute, phases.run_parallel, Manifest.load, Manifest.save
+    last = {}
+    window = threading.Condition()
+    inside = [0]  # hooks between their manifest load and save
+
+    def in_hook() -> bool:
+        return any(f.name == "after_merge" for f in traceback.extract_stack())
+
+    def run_parallel(ctx, tasks):
+        if tasks and tasks[0].phase == "compile":
+            last["id"] = tasks[-1].task_id
+        return real_parallel(ctx, tasks)
+
+    def execute(ctx, task):
+        if task.task_id == last.get("id"):
+            raise HardStop("stopped hard")
+        return real_execute(ctx, task)
+
+    def load(path):
+        m = real_load(path)
+        if in_hook():
+            with window:
+                inside[0] += 1
+                window.notify_all()
+                window.wait_for(lambda: inside[0] >= 2, timeout=0.5)
+        return m
+
+    def save(self, path):
+        real_save(self, path)
+        if in_hook():
+            with window:
+                inside[0] -= 1
+
+    with monkeypatch.context() as m:
+        m.setattr(phases, "run_parallel", run_parallel)
+        m.setattr(phases, "execute", execute)
+        m.setattr(Manifest, "load", staticmethod(load))
+        m.setattr(Manifest, "save", save)
+        with pytest.raises(HardStop):
+            build(loaded)
+    st = state_of(loaded)
+    groups = st["compile_groups"]
+    done = sorted(t for t in groups if st["tasks"][t]["status"] == "done")
+    assert len(done) >= 3 and last["id"] not in done
+    entities = Manifest.load(loaded.manifest_path).entities  # two saves at once could also leave it unreadable
+    assert [s for t in done for s in groups[t] if not (entities.get(s) or {}).get("facts_sha")] == []
+    runs_before = len(Ledger(loaded.ledger_path).entries())
+    assert build(loaded, resume=True) == 0
+    rerun = [e["task_id"] for e in Ledger(loaded.ledger_path).entries()[runs_before:] if e["phase"] == "compile"]
+    assert rerun == [last["id"]]
+    check_ok(loaded)
+
+
+def test_a_failed_compile_group_records_nothing_and_runs_again_on_resume(loaded, tmp_path, monkeypatch):
+    from conftest import set_runner
+    from wiki.grammar import MARK_END
+
+    set_runner(loaded, compile_group=2, concurrency=1)
+    assert build(loaded) == 0
+    page = loaded.wiki / "entities" / "acme.md"
+    sha = Manifest.load(loaded.manifest_path).entities["acme"]["facts_sha"]
+    picture = page.read_text().split(MARK_END)[0]
+    assert "[source:" in picture  # a picture already there, so only a new facts_sha can send acme to Compile
+    docs = tmp_path / "more"
+    docs.mkdir()
+    (docs / "aaa_update.md").write_text("ENTITY: acme | company | Acme\nFACT: acme | Acme moved its record date.\n")
+    add(loaded, [docs])
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "fail:compile@entities/acme.md")
+    assert build(loaded) == 2
+    monkeypatch.delenv("WIKI_FAKE_MISBEHAVE")
+    assert Manifest.load(loaded.manifest_path).entities["acme"]["facts_sha"] == sha  # the failed run recorded nothing
+    st = state_of(loaded)
+    failed = next(t for t, pages in st["compile_groups"].items() if "acme" in pages)
+    assert st["tasks"][failed]["status"] != "done"
+    runs_before = len(Ledger(loaded.ledger_path).entries())
+    assert build(loaded, resume=True) == 0
+    rerun = [e["task_id"] for e in Ledger(loaded.ledger_path).entries()[runs_before:] if e["phase"] == "compile"]
+    assert failed in rerun
+    now = page.read_text().split(MARK_END)[0]
+    assert now != picture and "aaa-update" in now
+    check_ok(loaded)
+
+
+def test_the_retry_of_a_rejected_run_hears_every_kind_of_problem(loaded):
+    import dataclasses
+
+    from wiki import phases
+
+    assert build(loaded) == 0
+    ctx = phases.Context(loaded, "build", "build-retry-note", loaded.repo)
+    ctx.state = {"tasks": {}}
+    task = phases.compile_tasks(ctx, ["acme"])[0]
+    calls = []
+
+    def validate(wiki, changed):  # rejects the first run for two kinds of problem, in the validators' order
+        calls.append(changed)
+        if len(calls) > 1:
+            return []
+        return [f"wiki/notes/x.md: filed line {n} was changed or removed: '- q {n}'" for n in range(1, 5)] + [
+            "ERROR addenda/x.md: line 5: fact line without a valid source tag: '- y' [tag]"]
+
+    out = phases.execute(ctx, dataclasses.replace(task, validate=validate))
+    assert out.ok and out.attempts == 2
+    argv = (ctx.run_dir / f"{task.task_id}-retry.cmd.json").read_text()
+    assert "fact line without a valid source tag" in argv and "filed line 1" in argv
+    long_calls = []
+
+    def validate_long(wiki, changed):  # rejects the first run at more length than the retry note has room for
+        long_calls.append(changed)
+        if len(long_calls) > 1:
+            return []
+        return [f"wiki/notes/x.md: filed line {n} was changed or removed: {'x' * 940!r}" for n in range(10)] + [
+            "ERROR addenda/x.md: line 5: fact line without a valid source tag: '- y' [tag]"]
+
+    long_task = dataclasses.replace(task, task_id=f"{task.task_id}-long", validate=validate_long)
+    assert phases.execute(ctx, long_task).ok
+    argv = json.loads((ctx.run_dir / f"{long_task.task_id}-retry.cmd.json").read_text())["argv"]
+    note = argv[argv.index("-p") + 1].split(phases.RETRY_NOTE)[-1]
+    assert len(note) <= phases.RETRY_NOTE_CHARS and note.endswith("(9 more of these)")

@@ -24,7 +24,9 @@ The knowledge wiki is in `repo/wiki/`. To answer a question from it:
    and pick the one or two pages the question needs.
 2. Read the first 60 lines of each page: an entity page opens with its
    "Current picture" between `current-picture` markers.
-3. Search that page for the term or heading you need and read only those lines.
+3. For more, use the page's `## Sources` table: it names, for each unit, the
+   per-unit file and heading holding the fact lines. Search those for what you
+   need and read only the matching lines.
 4. Cite the `[source: <unit> | as-of: <date>]` tag on every fact. A line marked
    CONFLICT is a conflict: report both sides.
 5. If the wiki does not answer, say "Not in the wiki" first and name the

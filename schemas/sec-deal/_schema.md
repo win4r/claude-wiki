@@ -139,14 +139,17 @@ entities in different units.
 
 ## Entity pages
 
-Written by the program from the fact lines mapped to the entity, grouped by
-unit. A page opens with its "Current picture", at most 30 lines between
-`<!-- current-picture:start -->` and `<!-- current-picture:end -->`; every line
-there is a fact line with its source tag, a CONFLICT line, or a last plain line
-naming the page's sections:
+Written by the program from the fact lines mapped to the entity. A page opens
+with its "Current picture", at most 30 lines between
+`<!-- current-picture:start -->` and `<!-- current-picture:end -->`. Every line
+there is a list item that holds either a fact line with its source tag or a
+CONFLICT line:
 
     - Price: $46.50 per share, revised from $44.00. [source: <unit> | as-of: <date>]
     - CONFLICT: damages cap $A [source: <unit-a> | as-of: <date>] vs $B [source: <unit-b> | as-of: <date>]
+
+The page's `## Sources` table then names, for each unit, the per-unit file and
+heading that hold the entity's fact lines.
 
 ## Data and secrets
 

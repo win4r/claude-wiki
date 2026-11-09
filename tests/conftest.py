@@ -1,6 +1,9 @@
+import atexit
 import os
+import shutil
 import stat
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -11,6 +14,21 @@ sys.path.insert(0, str(ROOT / "src"))
 from wiki.workspace import init_workspace  # noqa: E402
 
 FAKE = Path(__file__).with_name("fake_claude.py")
+
+# Offline tests never reach the real claude or the owner's key, not even a test that undoes its monkeypatch: a
+# review script once did that, and its resumes ran the real claude. So both are moved aside here, before any test
+# runs. The key leaves the environment, and WIKI_CLAUDE_BIN and the front of PATH name a stub claude that refuses.
+# The fake_claude fixture puts the fake in front for each test; only a live test gets the owner's values back.
+_OWNER_ENV = {k: os.environ.pop(k) for k in ("ANTHROPIC_API_KEY", "WIKI_CLAUDE_BIN") if k in os.environ}
+_OWNER_PATH = os.environ.get("PATH", "")
+_STUB_DIR = Path(tempfile.mkdtemp(prefix="wiki-tests-"))
+atexit.register(shutil.rmtree, _STUB_DIR, True)
+STUB_CLAUDE = _STUB_DIR / "claude"
+STUB_CLAUDE.write_text("#!/bin/sh\necho 'offline tests never start claude: this test undid the fake claude' >&2\n"
+                       "exit 97\n")
+STUB_CLAUDE.chmod(0o755)
+os.environ["WIKI_CLAUDE_BIN"] = str(STUB_CLAUDE)
+os.environ["PATH"] = os.pathsep.join(p for p in (str(_STUB_DIR), _OWNER_PATH) if p)
 
 ALPHA = """[SOURCE: SEC EDGAR | form: 8-K | filed: 2024-05-13 | accession: 0000000000-24-000001]
 
@@ -51,7 +69,15 @@ def gamma_text(parts_hint: int = 3) -> str:
 @pytest.fixture(autouse=True)
 def fake_claude(request, tmp_path, monkeypatch):
     """Every test runs against the fake claude, never the real one (live tests excepted)."""
-    if request.node.get_closest_marker("live"):
+    if request.node.get_closest_marker("live"):  # runs only with WIKI_LIVE=1, and only then gets the owner's
+        if os.environ.get("WIKI_LIVE") != "1":    # key, PATH and claude back, whatever skipif it carries itself
+            pytest.skip("paid: set WIKI_LIVE=1 (ask the owner first)")
+        monkeypatch.setenv("PATH", _OWNER_PATH)
+        for k in ("ANTHROPIC_API_KEY", "WIKI_CLAUDE_BIN"):
+            if k in _OWNER_ENV:
+                monkeypatch.setenv(k, _OWNER_ENV[k])
+            else:
+                monkeypatch.delenv(k, raising=False)
         return None
     wrapper = tmp_path / "bin" / "claude"
     wrapper.parent.mkdir()

@@ -12,6 +12,7 @@ ESCALATIONS_RULES = """\
 - escalations.md: a ranked list of every red flag in catalog.md's `## red-flags` sections, most serious first.
   It opens with `## Digest`: one short line per ranked item (number, title, entity). Then one entry per item:
   a heading, a one-line why-it-matters, and the red flag's fact line with its source tag, copied exactly.
+  Withdrawn red flags (tag with `retracted`) are left out of catalog.md and are not ranked.
 """
 
 
