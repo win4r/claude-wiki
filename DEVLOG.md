@@ -231,7 +231,7 @@ Follow-ups (done after M4, before M5; prompts untested until the next paid run):
 
 Cost: $0.10 (allowance $4). Total spent so far: $1.54 of $50.
 
-## M5 Acceptance build — build and first eval done; second eval awaiting approval (2026-11-08)
+## M5 Acceptance build — build and two evals done; two criteria unsettled (2026-11-08)
 
 The core-tier build is paid for and checked; the core-tier eval has not run yet.
 - Build: filed every unit, with no ownership violations (the 25 `violations.txt` files are all format
@@ -261,10 +261,23 @@ The core-tier build is paid for and checked; the core-tier eval has not run yet.
     outside the manifest is asked again once, with each bad id explained (an entity page's units come
     from its Sources table). Both runs' cost is counted, and the report counts these retries.
 
-Still to do: a second core-tier eval (paid, awaiting approval) for the clean report and the citation
-criterion.
+- Second core-tier eval (approved; estimate $0.40, spent **$0.38**; report
+  `repo/eval/report-core-tier-20261109T012606Z.md`): wiki 78% (32/41), sources 85%, both 90%. The trap was
+  refused in every mode, every answer was graded, and **no cited id is outside the manifest** (one both-mode
+  answer was asked again). Median cost: wiki $0.0034, sources $0.0025, both $0.0037.
+  - The two evals disagree. Wiki mode went from 88% (re-parsed) to 78%, and its median cost from below
+    sources mode to above it. With 10 questions, one answer swings the score by 2–3 points and the median
+    by a fraction of a cent. Neither criterion is settled by a single run.
+  - Wiki-mode misses are answers that stop early, not gaps in the wiki. The $500M program of 2024-02-26,
+    the 97.5% voting-power figure and the Accel total of 14,514,196 are all in the wiki, mostly in
+    `metrics/` files, which the ask prompt never mentions. The prompt says "stop as soon as the question
+    is answered".
 
-Cost so far: $11.83 (allowance $28). Total spent so far: $13.37 of $50.
+Acceptance status: tests ✓, build ✓, check 0 errors ✓, wiki 93% of corpus ✓, trap refused ✓, cited
+units ✓ (second eval). Wiki ≥ 80%: ✗ in the second eval (✓ in the first, after re-parsing). Wiki median
+cost < sources: ✗ in the second eval (✓ in the first). Awaiting the owner's decision.
+
+Cost so far: $12.21 (allowance $28). Total spent so far: $13.75 of $50.
 
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
