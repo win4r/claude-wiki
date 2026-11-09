@@ -309,8 +309,8 @@ The core-tier build is paid for and checked; the core-tier eval has not run yet.
   for sources. No cited id is outside the manifest (6 wiki answers were asked again), and the trap was
   refused every time. The score fell below 80%. The loss is almost all in two questions: held-fees went
   from 11/12 to 6/12 and held-ga-accel from 11/15 to 5/15. A name such as "Centerview" matches more than
-  200 lines. Lines from `escalations*.md` and the other non-fact files come first and fill the 30-hit
-  limit, so the agent concluded "not in the wiki" for facts that are in `notes/`. For example,
+  200 lines. In the held-fees transcript, entity pages, `_index.md` and `escalations.md` filled most of each
+  30-hit result, and none of the three searches returned the fee line. So the agent concluded "not in the wiki" for facts that are in `notes/`. For example,
   Centerview's ~$45M fee is in notes/defm14a-merger-proxy-part2.md.
 
 Acceptance status: tests ✓, build ✓, check 0 errors ✓, wiki 93% of corpus ✓, trap refused ✓. The other
