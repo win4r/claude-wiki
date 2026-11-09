@@ -187,7 +187,7 @@ def test_init_with_mcp_servers_or_user_plugins_fails(ws, monkeypatch):
 def test_ask_prompts_require_unit_ids_and_index_keeps_readme_points():
     assert "never\nan entity page slug" in render("ask_both")
     wiki = render("ask_wiki")
-    assert "never an entity page slug" in wiki and "`_schema.md`" in wiki and "head_limit 30" in wiki
+    assert "never an entity page slug" in wiki and "`_schema.md`" in wiki and "head_limit 30" in wiki and "{notes,metrics,relations,addenda,contracts}/*.md" in wiki
     idx = render("index", escalations=True)
     assert "_aliases.md` maps" in idx and '"computed"' in idx and "edit it in place" in idx
 
