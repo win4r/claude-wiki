@@ -231,7 +231,7 @@ Follow-ups (done after M4, before M5; prompts untested until the next paid run):
 
 Cost: $0.10 (allowance $4). Total spent so far: $1.54 of $50.
 
-## M5 Acceptance build — build and five evals done; cost criterion not met (2026-11-08)
+## M5 Acceptance build — build and eight evals done; score and cost not yet met together (2026-11-08)
 
 The core-tier build is paid for and checked; the core-tier eval has not run yet.
 - Build: filed every unit, with no ownership violations (the 25 `violations.txt` files are all format
@@ -293,11 +293,32 @@ The core-tier build is paid for and checked; the core-tier eval has not run yet.
   converted text files directly, so the corpus is cheap to search without the wiki. The gap is small but
   consistent, so it is a finding, not noise.
 
-Acceptance status after the pooled evals: tests ✓, build ✓, check 0 errors ✓, wiki 93% of corpus ✓,
-wiki ≥ 80% ✓ (all three runs), trap refused ✓. Cited units in the manifest: ✗ for one answer of 90 in
-run 1 (both mode, `_schema.md`), ✓ in runs 2–3. Wiki median cost < sources: ✗. Awaiting the owner.
+- The owner chose a cost fix and approved changing SPEC's reading order for wiki mode (commit 3e79506).
+  Wiki mode now searches first: a Grep of the fact lines with head_limit 30. It reads 40 lines of
+  `_index.md` or an entity's Current picture only when the search finds nothing, or when the question asks
+  for an entity's current state.
+- Three evals with that prompt (reports 20261109T022002Z, T022332Z, T022718Z; spent **$1.12**):
 
-Cost so far: $13.35 (allowance $28). Total spent so far: $14.89 of $50.
+  | mode | run 1 | run 2 | run 3 | pooled | median cost (pooled) |
+  | --- | --- | --- | --- | --- | --- |
+  | wiki | 85% | 76% | 73% | **78.0% (96/123)** | **$0.0025** |
+  | sources | 83% | 88% | 88% | 86.2% (106/123) | $0.0031 |
+  | both | 85% | 80% | 80% | 82.1% (101/123) | $0.0038 |
+
+  Cost is now met: wiki answers are cheaper in all three runs and take a median of 5 turns, against 8.5
+  for sources. No cited id is outside the manifest (6 wiki answers were asked again), and the trap was
+  refused every time. The score fell below 80%. The loss is almost all in two questions: held-fees went
+  from 11/12 to 6/12 and held-ga-accel from 11/15 to 5/15. A name such as "Centerview" matches more than
+  200 lines. Lines from `escalations*.md` and the other non-fact files come first and fill the 30-hit
+  limit, so the agent concluded "not in the wiki" for facts that are in `notes/`. For example,
+  Centerview's ~$45M fee is in notes/defm14a-merger-proxy-part2.md.
+
+Acceptance status: tests ✓, build ✓, check 0 errors ✓, wiki 93% of corpus ✓, trap refused ✓. The other
+three depend on the prompt. The previous prompt meets wiki ≥ 80% (87.8%) but not the cost criterion, and
+leaves one stray citation in 90 answers. The grep-first prompt meets cost and citations (0 of 90) but
+scores 78.0%. Awaiting the owner. The grep-first prompt is the one committed.
+
+Cost so far: $14.46 (allowance $28). Total spent so far: $16.00 of $50.
 
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
