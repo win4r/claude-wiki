@@ -231,7 +231,7 @@ Follow-ups (done after M4, before M5; prompts untested until the next paid run):
 
 Cost: $0.10 (allowance $4). Total spent so far: $1.54 of $50.
 
-## M5 Acceptance build — build and two evals done; two criteria unsettled (2026-11-08)
+## M5 Acceptance build — build and five evals done; cost criterion not met (2026-11-08)
 
 The core-tier build is paid for and checked; the core-tier eval has not run yet.
 - Build: filed every unit, with no ownership violations (the 25 `violations.txt` files are all format
@@ -273,11 +273,31 @@ The core-tier build is paid for and checked; the core-tier eval has not run yet.
     `metrics/` files, which the ask prompt never mentions. The prompt says "stop as soon as the question
     is answered".
 
-Acceptance status: tests ✓, build ✓, check 0 errors ✓, wiki 93% of corpus ✓, trap refused ✓, cited
-units ✓ (second eval). Wiki ≥ 80%: ✗ in the second eval (✓ in the first, after re-parsing). Wiki median
-cost < sources: ✗ in the second eval (✓ in the first). Awaiting the owner's decision.
+- The owner chose to fix the prompt and run three evals (commit 033d74f). The wiki-mode prompt now
+  greps `metrics/` for figures, answers every part of the question, and gives each figure its total,
+  program and later changes. Both and sources prompts are unchanged.
+- Three evals (reports 20261109T014427Z, T014736Z, T015056Z; spent **$1.14**):
 
-Cost so far: $12.21 (allowance $28). Total spent so far: $13.75 of $50.
+  | mode | run 1 | run 2 | run 3 | pooled | median cost (pooled) |
+  | --- | --- | --- | --- | --- | --- |
+  | wiki | 88% | 93% | 83% | **87.8% (108/123)** | $0.0034 |
+  | sources | 90% | 80% | 83% | 84.6% (104/123) | $0.0027 |
+  | both | 85% | 88% | 90% | 87.8% (108/123) | $0.0036 |
+
+  Every answer was graded and the trap was refused in every mode in every run. 7 answers were asked
+  again for bad citations. One both-mode trap answer in run 1 still cited `_schema.md` after its retry;
+  no other answer cited an id outside the manifest.
+- The cost criterion fails in every run: the wiki-mode median is $0.0007 above sources mode. Both modes
+  run on Haiku. On a sample of three questions, wiki mode read fewer tokens in total but wrote more to the
+  prompt cache (41.7k vs 31.2k tokens; a cache write costs 12.5 times a cache read). Sources mode greps
+  converted text files directly, so the corpus is cheap to search without the wiki. The gap is small but
+  consistent, so it is a finding, not noise.
+
+Acceptance status after the pooled evals: tests ✓, build ✓, check 0 errors ✓, wiki 93% of corpus ✓,
+wiki ≥ 80% ✓ (all three runs), trap refused ✓. Cited units in the manifest: ✗ for one answer of 90 in
+run 1 (both mode, `_schema.md`), ✓ in runs 2–3. Wiki median cost < sources: ✗. Awaiting the owner.
+
+Cost so far: $13.35 (allowance $28). Total spent so far: $14.89 of $50.
 
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
