@@ -337,7 +337,7 @@ Acceptance status (fact-folder prompt, committed): tests ✓, build ✓, check 0
 corpus ✓, wiki ≥ 80% ✓ (83% in each run), trap refused in every mode ✓, every cited unit in the manifest ✓
 (0 of 90). Wiki median cost < sources median: ✗ in the same-run comparison ($0.0027 vs $0.0024), and equal
 to sources mode's 11-eval median. Every SEC filing here is already plain text that Grep searches well, so
-on this corpus the wiki does not make answers cheaper. It gives the same accuracy in fewer turns.
+on this corpus the wiki does not make answers cheaper. Wiki mode takes fewer turns but scores below sources mode (82.9% vs 89.4%).
 
 Cost so far: $15.61 (allowance $28). Total spent so far: $17.15 of $50.
 
