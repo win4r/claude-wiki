@@ -231,7 +231,7 @@ Follow-ups (done after M4, before M5; prompts untested until the next paid run):
 
 Cost: $0.10 (allowance $4). Total spent so far: $1.54 of $50.
 
-## M5 Acceptance build — build and eleven evals done; every criterion met except cost (a tie) (2026-11-08)
+## M5 Acceptance build — done; every criterion met except wiki cost < sources (a tie) (2026-11-09)
 
 The core-tier build is paid for and checked; the core-tier eval has not run yet.
 - Build: filed every unit, with no ownership violations (the 25 `violations.txt` files are all format
@@ -339,7 +339,14 @@ corpus ✓, wiki ≥ 80% ✓ (83% in each run), trap refused in every mode ✓, 
 to sources mode's 11-eval median. Every SEC filing here is already plain text that Grep searches well, so
 on this corpus the wiki does not make answers cheaper. Wiki mode takes fewer turns but scores below sources mode (82.9% vs 89.4%).
 
-Cost so far: $15.61 (allowance $28). Total spent so far: $17.15 of $50.
+Closed by the owner on 2026-11-09, with the fact-folder prompt and the cost criterion recorded as a tie.
+Changes from SPEC that the owner approved in M5: entity pages hold a `## Sources` table instead of copied
+fact lines, and wiki-mode asks search first instead of following SPEC's reading order. SPEC.md itself
+is unchanged. Open question for the owner, from SPEC: `both` is still the default mode. Over the last
+three evals it scored 80.5% at the highest cost, so `sources` or `wiki` may be the better default.
+M6 starts when the owner supplies documents.
+
+Cost: $15.61 (allowance $28): build $11.44 and 11 evals $4.17. Total spent so far: $17.15 of $50.
 
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
