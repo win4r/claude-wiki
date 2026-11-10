@@ -20,6 +20,8 @@ from .workspace import private_dir
 MODES = ("wiki", "sources", "both")
 REFUSALS = ("not in the wiki", "not in the documents", "not in the data room")
 LOOSE_SOURCE = re.compile(r"source:\s*([A-Za-z0-9_.-]+)")
+TAG_FIRST_ID = re.compile(r"\[source:\s*([^|\]\n;,]+)", re.I)  # in a malformed tag, what stands where the unit goes
+TAG_NEXT_ID = re.compile(r";\s*(?:source:\s*)?([A-Za-z0-9_.-]+)\s*(?=\||\]|$)")  # "; <id> |" and "; <id>]"
 
 
 def refused(answer: str) -> bool:
@@ -36,6 +38,9 @@ def cited_units(answer: str) -> tuple[list[str], list[str]]:
         bad += malformed
     loose = LOOSE_SOURCE.findall(answer or "")
     units += [u for u in loose if u not in units and u.lower() == u]
+    for snippet in bad:  # a malformed tag's ids too, whatever their case, and those after the first
+        first = TAG_FIRST_ID.match(snippet)
+        units += ([first.group(1).strip()] if first and first.group(1).strip() else []) + TAG_NEXT_ID.findall(snippet)
     return sorted(set(units)), bad
 
 

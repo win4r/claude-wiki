@@ -16,6 +16,7 @@ PRICES = {
     "claude-sonnet-5-5": {"input": 2.00, "cache_write": 2.50, "cache_read": 0.10, "output": 10.00},
     "claude-haiku-5-5": {"input": 0.10, "cache_write": 0.125, "cache_read": 0.01, "output": 0.50},
     "claude-fable-5-1": {"input": 10.00, "cache_write": 12.50, "cache_read": 0.25, "output": 50.00},
+    "claude-fable-5-2": {"input": 8.00, "cache_write": 10.00, "cache_read": 0.20, "output": 40.00},
 }
 # A Haiku 5.5 request whose prompt passes 100,000 tokens pays these instead.
 LONG_PROMPT_PRICES = {
@@ -39,6 +40,9 @@ QUESTION_USD = 0.02
 GRADE_USD = 0.02
 DREAM_BASE_USD = 1.00
 DREAM_PER_TRANSCRIPT_USD = 0.15
+DREAM_APPLY_USD = 0.50  # starting figures for the runs a dream makes after its analysts
+DREAM_TAIL_USD = {"link": 0.10, "compile": 0.15, "index": 0.20}
+DREAM_COMPILE_RUNS = 2
 
 
 def model_id(alias: str) -> str:
@@ -144,8 +148,37 @@ def estimate_grade(averages: dict, model: str) -> float:
     return _calibrated(averages, "grade", model, None, GRADE_USD)[0]
 
 
-def estimate_dream(n_transcripts: int) -> float:
-    return DREAM_BASE_USD + DREAM_PER_TRANSCRIPT_USD * n_transcripts
+def dream_task_estimates(group_sizes: list[int], averages: dict | None = None,
+                         models: dict | None = None) -> dict[str, float]:
+    """An estimate for each run of a dream (an analyst per group of transcripts, the apply run, then a link, two
+    compile and an index run): the ledger's average for its phase and model, or its starting figure. A dream's
+    cap is shared in proportion to these, so a phase that has cost a lot here gets a budget to match."""
+    averages, models = averages or {}, models or {}
+    tasks = {}
+    for n, size in enumerate(group_sizes, 1):
+        tasks[f"analyst-{n:02d}"] = _calibrated(averages, "dream-analyst", models.get("dream_analyst"), None,
+                                                DREAM_PER_TRANSCRIPT_USD * size)[0]
+    tasks["apply"] = _calibrated(averages, "dream-apply", models.get("dream_apply"), None, DREAM_APPLY_USD)[0]
+    for phase, start in DREAM_TAIL_USD.items():
+        amount = _calibrated(averages, phase, models.get(phase), None, start)[0]
+        if phase == "compile":
+            tasks.update({f"compile-{n:02d}": amount for n in range(1, DREAM_COMPILE_RUNS + 1)})
+        else:
+            tasks[phase] = amount
+    return tasks
+
+
+def estimate_dream(n_transcripts: int, averages: dict | None = None, models: dict | None = None,
+                   group: int = 10) -> float:
+    """$1 plus $0.15 a transcript to start with. Once the ledger holds an analyst run and an apply run on these
+    models, the sum of dream_task_estimates."""
+    averages, models = averages or {}, models or {}
+    if not averages.get(("dream-analyst", models.get("dream_analyst"))) \
+            or not averages.get(("dream-apply", models.get("dream_apply"))):
+        return DREAM_BASE_USD + DREAM_PER_TRANSCRIPT_USD * n_transcripts
+    group = max(1, group)
+    sizes = [min(group, n_transcripts - i) for i in range(0, n_transcripts, group)] or [0]
+    return sum(dream_task_estimates(sizes, averages, models).values())
 
 
 def usd(amount: float) -> str:

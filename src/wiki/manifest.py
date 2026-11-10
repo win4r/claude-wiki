@@ -33,6 +33,9 @@ def split_units(slug: str, text: str, batch_chars: int) -> list[tuple[str, int |
     header = header.rstrip().rstrip("]")
     body = body.lstrip("\n")
     room = batch_chars - len(header) - 40
+    if room < 1:  # no part could hold a character of the document: cutting would never end
+        raise WikiError(f"runner.batch_chars is {batch_chars}, too small to hold a part's [SOURCE] line "
+                        f"({len(header) + 40} characters) and any text; raise it in wiki.toml.")
     pieces, cur, size = [], [], 0
     for line in body.splitlines(keepends=True):
         while len(line) > room:  # a single very long line is cut
@@ -102,8 +105,12 @@ class Manifest:
     def corpus_bytes(self) -> int:
         return sum(int(rec.get("size", 0)) for rec in self.units.values() if rec.get("status") != "removed")
 
-    def add_document(self, source: str, text: str, docs_dir: Path, batch_chars: int) -> list[tuple[str, str]]:
-        """Record one converted document; write its units to docs/. Returns [(unit, status)]."""
+    def add_document(self, source: str, text: str, docs_dir: Path, batch_chars: int,
+                     write: bool = True) -> list[tuple[str, str]]:
+        """Record one converted document; write its units to docs/. Returns [(unit, status)].
+
+        With write=False nothing is written to docs/: a trial on a copy of the manifest, which raises whatever
+        the real call would refuse."""
         slug = doc_slug(source)
         doc_sha = sha256_bytes(text.encode())
         prev = self.documents.get(slug)
@@ -124,8 +131,10 @@ class Manifest:
             data = unit_text.encode()
             sha = sha256_bytes(data)
             status = "new" if not other else ("unchanged" if other["sha256"] == sha else "changed")
+            if other and other.get("status") == "removed":
+                status = "changed"  # the document is split this way again: the unit is live once more, and refiled
             target = Path(docs_dir) / f"{unit}.txt"
-            if status != "unchanged" or not target.exists():
+            if write and (status != "unchanged" or not target.exists()):
                 if target.exists():
                     os.chmod(target, 0o600)
                     target.unlink()
@@ -151,7 +160,7 @@ class Manifest:
 
     def set_status(self, units, status: str) -> None:
         for u in units:
-            if u in self.units:
+            if u in self.units and self.units[u].get("status") != "removed":  # a unit its document dropped stays so
                 self.units[u]["status"] = status
 
 

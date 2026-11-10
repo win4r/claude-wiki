@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -610,3 +611,239 @@ def test_the_retry_of_a_rejected_run_hears_every_kind_of_problem(loaded):
     argv = json.loads((ctx.run_dir / f"{long_task.task_id}-retry.cmd.json").read_text())["argv"]
     note = argv[argv.index("-p") + 1].split(phases.RETRY_NOTE)[-1]
     assert len(note) <= phases.RETRY_NOTE_CHARS and note.endswith("(9 more of these)")
+
+
+def test_ctrl_c_stops_a_build_without_a_retry_or_a_new_task_and_resume_finishes_it(loaded, monkeypatch):
+    """After Ctrl-C a build used to retry each run that was cut short, and never came back to the prompt."""
+    from conftest import interrupted, set_runner
+
+    set_runner(loaded, concurrency=2)
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "hang:extract")
+    started = lambda: [p for p in loaded.runs.glob("build-*/extract-*.jsonl") if p.stat().st_size]  # noqa: E731
+    start = time.monotonic()
+    why = interrupted(lambda: build(loaded), lambda: len(started()) >= 2)
+    assert isinstance(why, KeyboardInterrupt) and time.monotonic() - start < 40
+    lines = Ledger(loaded.ledger_path).entries()
+    assert len(lines) == 2 and all(e["outcome"] == "interrupted" and e["charged_full_cap"] for e in lines)
+    assert not any(e["task_id"].endswith("-retry") for e in lines)
+    tasks = state_of(loaded)["tasks"]
+    cut = sorted(t for t, rec in tasks.items() if rec["status"] == "failed")
+    assert cut == sorted(e["task_id"] for e in lines) and all(tasks[t]["reason"] == "run ended: interrupted" for t in cut)
+    assert len(tasks) == 4 and all(rec["status"] == "pending" for t, rec in tasks.items() if t not in cut)
+    no_worktrees_left(loaded)
+    monkeypatch.delenv("WIKI_FAKE_MISBEHAVE")
+    assert build(loaded, resume=True) == 0
+    check_ok(loaded)
+
+
+def test_a_compile_run_that_leaves_a_picture_empty_is_rejected_and_retried(loaded, monkeypatch):
+    """Such a run used to count as done, and its pages were paid for again by the next build."""
+    from wiki.grammar import picture_text
+
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "blankpic:compile:1")
+    assert build(loaded) == 0
+    compiles = [e["task_id"] for e in Ledger(loaded.ledger_path).entries() if e["phase"] == "compile"]
+    assert compiles == ["compile-01", "compile-01-retry"]
+    violations = next(loaded.runs.glob("build-*/compile-01.violations.txt")).read_text()
+    assert "its current picture is empty" in violations and violations.count("\n") == len(list((loaded.wiki / "entities").glob("*.md")))
+    assert all(picture_text(p.read_text()).strip() for p in (loaded.wiki / "entities").glob("*.md"))
+    check_ok(loaded)
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "blankpic:compile")  # every attempt: the group fails, and is not recorded
+    (loaded.root / "more").mkdir()
+    (loaded.root / "more" / "late_note.md").write_text("ENTITY: acme | company | Acme\nFACT: acme | A late fact.\n")
+    add(loaded, [loaded.root / "more"])
+    assert build(loaded) == 2
+    assert "compile" in state_of(loaded)["stopped"]
+
+
+def test_add_refuses_before_it_writes_anything(loaded, tmp_path):
+    """One file that could not be converted, or two that make one slug, used to stop wiki add with the earlier
+    documents already replaced in docs/ and the manifest not saved."""
+    from wiki.workspace import sha256_file
+
+    def in_step():
+        m = Manifest.load(loaded.manifest_path)
+        return all(sha256_file(loaded.docs / f"{u}.txt") == m.units[u]["sha256"] for u in m.live_units())
+
+    before = Manifest.load(loaded.manifest_path).data
+    new = tmp_path / "new"
+    new.mkdir()
+    (new / "alpha_8k.txt").write_text((loaded.docs / "alpha-8k.txt").read_text() + "FACT: acme | One more line.\n")
+    (new / "sheet.xyz").write_text("not a supported type")
+    with pytest.raises(WikiError, match="unsupported type"):
+        add(loaded, [new / "alpha_8k.txt", new / "sheet.xyz"])
+    assert in_step() and Manifest.load(loaded.manifest_path).data == before
+    (new / "alpha_8k.md").write_text("the same slug as alpha_8k.txt")
+    (new / "omega.txt").write_text("FACT: acme | Omega.\n")
+    with pytest.raises(WikiError, match="both make the slug"):
+        add(loaded, [new / "omega.txt", new / "alpha_8k.txt", new / "alpha_8k.md"])
+    assert in_step() and Manifest.load(loaded.manifest_path).data == before and not (loaded.docs / "omega.txt").exists()
+    with pytest.raises(WikiError, match="both make the slug"):  # the manifest's alpha_8k.txt and this alpha_8k.md
+        add(loaded, [new / "omega.txt", new / "alpha_8k.md"])
+    assert in_step() and Manifest.load(loaded.manifest_path).data == before and not (loaded.docs / "omega.txt").exists()
+    assert add(loaded, [new / "alpha_8k.txt"]) == 0
+    assert in_step() and Manifest.load(loaded.manifest_path).units["alpha-8k"]["status"] == "changed"
+
+
+def test_a_stale_manifest_tmp_goes_when_the_lock_is_taken(loaded):
+    tmp = loaded.repo / "manifest.json.tmp"
+    tmp.write_text("{half a manifest")  # a manifest write that was killed
+    with loaded.lock("add"):
+        assert not tmp.exists()
+    assert gitops.is_clean(loaded.repo)
+
+
+def test_a_retry_note_takes_no_time_over_a_long_run_of_characters_without_spaces():
+    from wiki.phases import retry_reason
+
+    start = time.monotonic()  # sorting problems into kinds took 9 s on a run of 60,000 non-spaces, 4 times that on twice
+    note = retry_reason(["wiki/notes/u.md: line 3: " + "x" * 120_000 + " is not a fact line", "wiki/notes/u.md: no tag"])
+    assert time.monotonic() - start < 2 and len(note) <= 2000 and "no tag" in note
+
+
+def test_a_kill_or_a_closed_terminal_ends_a_build_as_ctrl_c_does(loaded):
+    """SIGTERM and SIGHUP used to end wiki with no ledger line for the runs in flight, the runs still going, and
+    the lock left behind."""
+    import signal
+
+    from conftest import set_runner
+
+    set_runner(loaded, concurrency=2)
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {**os.environ, "PYTHONPATH": os.path.join(root, "src"), "WIKI_FAKE_MISBEHAVE": "hang:extract"}
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        before = len(Ledger(loaded.ledger_path).entries())
+        args = ["build", "--resume"] if before else ["build"]
+        proc = subprocess.Popen([sys.executable, "-m", "wiki.cli", "-w", str(loaded.root), *args], env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        deadline = time.monotonic() + 30
+        streams = lambda: [p for p in loaded.runs.glob("build-*/extract-*.jsonl") if p.stat().st_size]  # noqa: E731
+        while time.monotonic() < deadline and (len(streams()) < 2 or not loaded.lock_path.exists()):
+            time.sleep(0.05)
+        time.sleep(0.3)
+        proc.send_signal(sig)
+        out, err = proc.communicate(timeout=60)
+        assert proc.returncode == 130 and "wiki: interrupted" in err, (sig, proc.returncode, err[-300:])
+        new = Ledger(loaded.ledger_path).entries()[before:]
+        assert len(new) == 2 and all(e["outcome"] == "interrupted" and e["charged_full_cap"] for e in new), (sig, new)
+        assert not loaded.lock_path.exists()
+        for p in loaded.runs.glob("build-*/extract-*.jsonl"):  # the next round waits for streams of its own
+            p.unlink()
+    assert build(loaded, resume=True) == 0
+    check_ok(loaded)
+
+
+def test_a_resume_says_what_it_may_spend_and_takes_a_lower_cap(loaded, monkeypatch, capsys):
+    """wiki build --resume printed no figure, and ignored --max-usd."""
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "maxturns:check")
+    assert build(loaded) == 2
+    monkeypatch.delenv("WIKI_FAKE_MISBEHAVE")
+    spent = Ledger(loaded.ledger_path).spent()
+    capsys.readouterr()
+    assert build(loaded, resume=True, estimate_only=True) == 0
+    out = capsys.readouterr().out
+    assert f"Spent so far ${spent:,.2f} of its cap of $6.00" in out and "unfinished tasks' budgets come to $" in out
+    assert Ledger(loaded.ledger_path).spent() == spent
+    assert build(loaded, resume=True, max_usd=spent + 0.01) == 2  # no task's budget fits under that cap
+    assert "the command's cap of" in state_of(loaded)["stopped"] and Ledger(loaded.ledger_path).spent() == spent
+    assert build(loaded, resume=True) == 0
+    check_ok(loaded)
+
+
+def test_a_document_added_again_unchanged_on_a_later_day_stays_unchanged(loaded, tmp_path, monkeypatch):
+    """A document with no [SOURCE] line of its own gets "added: <today>" in its text. Added again on a later day
+    it used to count as changed, and the next build paid to extract and check it again."""
+    import datetime
+
+    from wiki import convert as convert_mod
+
+    assert build(loaded) == 0
+    stored = (loaded.docs / "beta-note.txt").read_text()
+    today = datetime.date.today()
+    assert stored.startswith(f"[SOURCE: beta_note.md | added: {today.isoformat()}]")
+
+    class Tomorrow(datetime.date):
+        @classmethod
+        def today(cls):
+            return today + datetime.timedelta(days=1)
+
+    monkeypatch.setattr(convert_mod, "date", Tomorrow)
+    corpus = loaded.root.parent / "corpus"
+    assert add(loaded, [corpus]) == 0
+    m = Manifest.load(loaded.manifest_path)
+    assert m.pending_units() == [] and (loaded.docs / "beta-note.txt").read_text() == stored
+    (corpus / "beta_note.md").write_text((corpus / "beta_note.md").read_text() + "FACT: acme | One more.\n")
+    add(loaded, [corpus])  # changed for real: filed again, under the day it changed
+    assert Manifest.load(loaded.manifest_path).pending_units() == ["beta-note"]
+    assert (loaded.docs / "beta-note.txt").read_text().startswith(
+        f"[SOURCE: beta_note.md | added: {(today + datetime.timedelta(days=1)).isoformat()}]")
+
+
+def test_two_files_of_one_name_and_hidden_folders(loaded, tmp_path):
+    """report.txt in two folders was taken for two versions of one document: the second replaced the first."""
+    inbox = tmp_path / "inbox"
+    for year in ("2023", "2024"):
+        (inbox / year).mkdir(parents=True)
+        (inbox / year / "report.txt").write_text(f"FACT: acme | Revenue in {year}.\n")
+    before = Manifest.load(loaded.manifest_path).data
+    with pytest.raises(WikiError, match="both make the slug 'report'"):
+        add(loaded, [inbox])
+    assert Manifest.load(loaded.manifest_path).data == before and not (loaded.docs / "report.txt").exists()
+    (inbox / "2023" / "report.txt").rename(inbox / "2023" / "report_2023.txt")
+    (inbox / ".cache").mkdir()
+    (inbox / ".cache" / "hidden.txt").write_text("FACT: acme | Not a document.\n")  # used to be added
+    assert add(loaded, [inbox]) == 0
+    assert {"report", "report-2023"} <= set(Manifest.load(loaded.manifest_path).units)
+    assert "hidden" not in Manifest.load(loaded.manifest_path).units
+
+
+def test_a_document_added_again_before_a_resume_is_extracted_again(loaded, corpus, monkeypatch):
+    """The resumed build took its finished tasks from state.json, so it filed the corrected document under its new
+    sha256 with the facts of the old text."""
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "maxturns:check")
+    assert build(loaded) == 2
+    monkeypatch.delenv("WIKI_FAKE_MISBEHAVE")
+    assert "extract" in state_of(loaded)["phases_done"]
+    (corpus / "beta_note.md").write_text((corpus / "beta_note.md").read_text().replace("$46.50", "$48.00"))
+    add(loaded, [corpus])
+    before = len(Ledger(loaded.ledger_path).entries())
+    assert build(loaded, resume=True) == 0
+    extracted = [e["task_id"] for e in Ledger(loaded.ledger_path).entries()[before:] if e["phase"] == "extract"]
+    batch = next(b for b, us in state_of(loaded)["batches"].items() if "beta-note" in us)
+    assert extracted == [f"extract-{batch}"]  # that batch only
+    notes = (loaded.wiki / "notes" / "beta-note.md").read_text()
+    assert "$48.00" in notes and "$46.50" not in notes
+    assert Manifest.load(loaded.manifest_path).pending_units() == []
+    check_ok(loaded)
+
+
+def test_link_may_not_give_a_slug_a_second_row_and_index_must_write_entries_the_program_can_split(loaded, monkeypatch):
+    """Both passed their run's checks and failed the check that ends the build, after every later phase was paid
+    for; the build could then not be finished, since a resume had nothing left to run."""
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "dupslug:link:1;bigesc:index:1")
+    assert build(loaded) == 0
+    runs = [e["task_id"] for e in Ledger(loaded.ledger_path).entries()]
+    assert runs[runs.index("link"):runs.index("link") + 2] == ["link", "link-retry"] and runs[-2:] == ["index", "index-retry"]
+    assert "has more than one row" in next(loaded.runs.glob("build-*/link.violations.txt")).read_text()
+    assert "no entry starts with a `### ` heading" in next(loaded.runs.glob("build-*/index.violations.txt")).read_text()
+    check_ok(loaded)
+
+
+def test_a_run_id_is_never_shared(tmp_path, monkeypatch):
+    from wiki import phases
+
+    stamps = iter(["20260101T000000Z", "20260101T000000Z", "20260101T000001Z"])
+    monkeypatch.setattr(phases, "now_id", lambda: next(stamps))
+    assert phases.new_id(lambda ts: ts == "20260101T000000Z") == "20260101T000001Z"  # it waited for a free one
+
+
+def test_a_file_over_the_page_limit_is_its_runs_problem(loaded):
+    """No run's checks looked at size, so a per-unit file over 100 KB failed only the check that ends the build."""
+    from wiki.phases import lint_changed
+
+    assert build(loaded) == 0
+    notes = loaded.wiki / "notes" / "alpha-8k.md"
+    notes.write_text(notes.read_text() + "".join(f"- Line {n}. [source: alpha-8k | as-of: 2024-05-13]\n" for n in range(2500)))
+    problems = lint_changed(Manifest.load(loaded.manifest_path), loaded.wiki, ["wiki/notes/alpha-8k.md"])
+    assert len(problems) == 1 and "over the 100 KB limit" in problems[0]
+    assert lint_changed(Manifest.load(loaded.manifest_path), loaded.wiki, ["wiki/notes/beta-note.md"]) == []

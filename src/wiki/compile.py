@@ -33,6 +33,7 @@ def collect(files: dict[str, str]) -> tuple[dict, dict]:
     rows, _ = parse_aliases(files.get("_aliases.md", ""))
     by_slug = {r.slug: {"row": r, "groups": {}, "types": set(), "where": []} for r in rows}
     headings = heading_map(files)
+    sections: dict[str, list] = {}  # each file parsed once, however many headings it holds
     for (unit, heading), rec in sorted(headings.items()):
         hits = [r.slug for r in rows if heading in r.proposed or f"{unit}#{heading}" in r.proposed]
         if len(hits) != 1:
@@ -41,7 +42,9 @@ def collect(files: dict[str, str]) -> tuple[dict, dict]:
         if rec["type"]:
             entry["types"].add(rec["type"])
         for path in sorted(set(rec["paths"]), key=lambda p: (0 if p.startswith("notes/") else 1, p)):
-            for s in parse_sections(files[path]):
+            if path not in sections:
+                sections[path] = parse_sections(files[path])
+            for s in sections[path]:
                 if s.heading == heading and s.facts:
                     lines = entry["groups"].setdefault(unit, [])
                     lines.extend(x for x in s.facts if x not in lines)
@@ -178,7 +181,7 @@ def compile_pages(wiki_dir: Path, known_sha: dict[str, str], only: set[str] | No
         if m and m.group("slug") in keep and stem in keep:
             continue
         (ent_dir / f"{stem}.md").unlink(missing_ok=True)
-        if not FACTS_PAGE.match(stem):
+        if not FACTS_PAGE.match(stem) or stem in by_slug:
             res.removed.append(stem)
     return res
 
@@ -207,9 +210,10 @@ def split_escalations(wiki_dir: Path, budget: int = ESCALATIONS_BUDGET) -> list[
     if not main.exists():
         return []
     text = main.read_text()
-    # an earlier split: put the continued entries back before splitting again
+    # An earlier split: put the continued entries back before splitting again. A page Index has since written
+    # whole holds every entry already; the old continuation pages are then stale, and are replaced or removed below.
     fm, body, has = split_frontmatter(text)
-    if old:
+    if old and CONTINUED_MARK in body:  # the program's own split, still in place: put its entries back
         body = body.split(CONTINUED_MARK)[0]
         for p in sorted(old, key=lambda q: int(ESCALATIONS_PAGE.match(q.name)["n"])):
             _, more, _ = split_frontmatter(p.read_text())
@@ -230,6 +234,8 @@ def split_escalations(wiki_dir: Path, budget: int = ESCALATIONS_BUDGET) -> list[
             blocks.append(ln)
         else:
             blocks[-1] += ln
+    if not blocks:  # no `### ` entry to split at: the page stays as it is, for wiki check to report its size
+        return []
     pages: list[list[str]] = [[]]
     used = len((head_fm + head).encode()) + 400
     for b in blocks:

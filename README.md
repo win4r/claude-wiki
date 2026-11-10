@@ -58,7 +58,7 @@ exits with a message (exit code 75).
 | --- | --- | --- |
 | `wiki init <dir>` | Creates a workspace: `wiki.toml`, a short `CLAUDE.md`, `docs/`, `runs/` (mode 0700), `ledger.jsonl`, and `repo/` (git) with a seeded `wiki/_schema.md`. `--schema-dir` picks another schema and steering | No |
 | `wiki fetch-example --tier quickstart\|core` | Downloads the example SEC filings with the quickstart's fetch script, adds the synthetic Word analyst note and vendor CSV, runs `wiki add` on them, sets the workspace's tier (and build cap), and copies the question sets into `repo/eval/`. Refuses to run without `EDGAR_USER_AGENT` | No |
-| `wiki add <paths>` | Converts documents to text starting with a `[SOURCE: ...]` line, splits long ones into `-part<n>` units, stores them read-only in `docs/`, and records them in `manifest.json`. Refuses scanned PDFs | No |
+| `wiki add <paths>` | Converts documents to text starting with a `[SOURCE: ...]` line, splits long ones into `-part<n>` units, stores them read-only in `docs/`, and records them in `manifest.json`. Refuses, before it writes anything, scanned PDFs, files it cannot read, and two files that make one slug. A document without a `[SOURCE: ...]` line of its own gets one with the day it was added, and keeps that day while its text is unchanged | No |
 | `wiki build` | Runs the eight phases (convert, batch, extract, check, resolve, link, compile, index) over new or changed units, committing after each phase, then `wiki check`. `--resume` finishes an interrupted build, rerunning only unfinished tasks | Yes |
 | `wiki check` | Lints the wiki and enforces its invariants; `--against <ref>` also checks that every per-unit fact line of that commit is still there, unchanged or with only `valid_to`/`retracted` added. Exits 1 on any error | No |
 | `wiki ask "<question>"` | One fresh read-only session; `--mode wiki` (the wiki only), `sources` (the documents only) or `both` (default: the wiki first, documents to confirm or fill a gap). Wiki mode searches the fact folders first (`notes/`, `metrics/`, `relations/`, `addenda/`, `contracts/`) and reads `_index.md` or an entity's Current picture only when needed. Checks every cited unit against the manifest, asks once more when an answer cites an id outside it, and saves the transcript to `runs/ask/` | Yes |
@@ -94,6 +94,9 @@ Every paid command prints its estimate first. The caps live in `wiki.toml`:
   `--approve-over-cap`. If spent plus the estimate would pass the total, the command refuses (exit code 4) and
   names the shortfall; only the owner raises `caps.total_usd`, by editing `wiki.toml`.
 - A run that ends without a result event is charged its full share.
+- Ctrl-C, a `kill` (SIGTERM) or a closed terminal (SIGHUP) stops a command's runs and starts no others. A run
+  cut short is recorded in the ledger as `interrupted`, charged the same way, and never retried; `wiki build
+  --resume` runs it again.
 - `ledger.jsonl` is the only record of spend; it is outside git. Default models: Haiku for every agent role,
   Sonnet for the grader, set per role under `[models]`.
 
@@ -107,6 +110,9 @@ line like this (with `runner.api_key_settings` set, so the key comes from your `
 ```
 
 Then review with `git -C repo diff <base>..dream/<timestamp>` and run `wiki dream --accept` or `--discard`.
+Accept or discard a dream before the next `wiki build`: if main has changed the same files since the dream
+started, `--accept` refuses and leaves main as it was, and the dream has to be discarded and run again. A dream
+that was stopped partway can only be discarded.
 Whether to install it is your call.
 
 ## Layout and safety

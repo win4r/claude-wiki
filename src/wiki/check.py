@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from . import gitops
@@ -33,6 +34,14 @@ class Finding:
 
     def __str__(self) -> str:
         return f"{self.severity.upper():7} {self.path}: {self.message} [{self.rule}]"
+
+
+def is_date(s: str) -> bool:
+    try:
+        date.fromisoformat(s)
+    except ValueError:
+        return False
+    return True
 
 
 def read_wiki(wiki_dir: Path) -> dict[str, str]:
@@ -82,16 +91,19 @@ def run_checks(wiki_dir: Path, manifest, repo: Path | None = None, against: str 
     units = manifest.unit_names()
     add = lambda sev, rule, path, msg: f.append(Finding(sev, rule, path, msg))  # noqa: E731
 
-    entity_pages = {Path(p).stem for p in files if kind_of(p) == "entity"}
-    facts_pages = {Path(p).stem for p in files if kind_of(p) == "facts"}
-    link_targets = entity_pages | facts_pages | ROOT_STEMS | {Path(p).stem for p in files if ESCALATIONS_PAGE.match(p)}
     rows, alias_problems = parse_aliases(files.get("_aliases.md", ""))
+    slugs = {r.slug for r in rows}
+    # a page named for a row's slug is that entity's page, even when the slug ends like a fact page's name
+    kinds = {p: "entity" if kind_of(p) == "facts" and Path(p).stem in slugs else kind_of(p) for p in files}
+    entity_pages = {Path(p).stem for p in files if kinds[p] == "entity"}
+    facts_pages = {Path(p).stem for p in files if kinds[p] == "facts"}
+    link_targets = entity_pages | facts_pages | ROOT_STEMS | {Path(p).stem for p in files if ESCALATIONS_PAGE.match(p)}
     headings = heading_map(files)
     resolve = LinkResolver(rows, headings)
     via_alias = 0  # links in per-unit files that name a proposed heading and reach their page through _aliases.md
 
     for path, text in files.items():
-        k = kind_of(path)
+        k = kinds[path]
         stem = Path(path).stem
         size = len(text.encode())
         # frontmatter
@@ -111,13 +123,19 @@ def run_checks(wiki_dir: Path, manifest, repo: Path | None = None, against: str 
             add("error", "unit", path, f"no unit {stem!r} in the manifest")
         # fact lines and tags
         if k in TAGGED_DIRS or k in ("entity", "facts"):
-            for n, line in enumerate(body.splitlines(), start=1):
+            first = len(text.splitlines()) - len(body.splitlines()) + 1  # the file's line numbers, as the other rules give
+            for n, line in enumerate(body.splitlines(), start=first):
                 good, bad = tags_in(line)
                 for snippet in bad:
                     add("error", "tag", path, f"line {n}: malformed source tag {snippet[:80]!r}")
                 for t in good:
                     if t["unit"] not in units:
                         add("error", "tag", path, f"line {n}: tag names unit {t['unit']!r}, not in the manifest")
+                    if t["section"] and k != "contracts":
+                        add("error", "tag", path, f"line {n}: a tag has a section only in contracts/")
+                    for key in ("as_of", "valid_from", "valid_to", "retracted"):
+                        if t[key] and not is_date(t[key]):
+                            add("error", "tag", path, f"line {n}: {t[key]!r} is not a date")
                 if is_list_item(line) and not fact_tag(line) and not bad:
                     add("error", "tag", path, f"line {n}: fact line without a valid source tag: {line.strip()[:80]!r}")
             if k == "contracts":
@@ -239,15 +257,17 @@ def check_against(files: dict[str, str], repo: Path, ref: str) -> list[Finding]:
     out = []
     if not gitops.ref_exists(repo, ref):
         return [Finding("error", "against", ref, "no such commit")]
-    for rel in gitops.ls_files(repo, ref, "wiki"):
+    for rel, blob in gitops.tree_blobs(repo, ref, "wiki").items():
         path = rel[len("wiki/"):]
         if kind_of(path) not in TAGGED_DIRS:
             continue
-        base_text = gitops.show(repo, ref, rel) or ""
         current = files.get(path)
         if current is None:
             out.append(Finding("error", "against", path, "file deleted since the base"))
             continue
+        if gitops.blob_id(current.encode(), blob) == blob:
+            continue  # the file is as it was at the base, so no line of it is lost: no need to read the base's copy
+        base_text = gitops.show(repo, ref, rel) or ""
         for n, line in lost_lines(base_text, current):
             out.append(Finding("error", "against", path,
                                f"base line {n} missing or changed beyond valid_to/retracted: {line.strip()[:80]!r}"))

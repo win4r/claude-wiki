@@ -222,3 +222,45 @@ def test_usd_fine():
     from wiki.cost import usd_fine
 
     assert usd_fine(0.0024) == "$0.0024" and usd_fine(0) == "$0.00" and usd_fine(1.5) == "$1.50"
+
+
+def test_smoke_keeps_its_budgets_within_its_cap_and_the_total(ws, capsys, monkeypatch):
+    """Its five runs had fixed budgets of $0.70 in all, whatever was left of the total and whatever --max-usd said."""
+    from wiki.ledger import Ledger
+
+    text = ws.toml.read_text()
+    ws.toml.write_text(re.sub(r"^total_usd = .*$", "total_usd = 0.40", text, flags=re.M))
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "noresult")  # every run is charged its whole budget
+    assert main(["-w", str(ws.root), "smoke"]) == 0
+    assert Ledger(ws.ledger_path).spent() == pytest.approx(0.40, abs=1e-4)  # each line is rounded to a millionth
+    ws.toml.write_text(text)
+    before = Ledger(ws.ledger_path).spent()
+    assert main(["-w", str(ws.root), "smoke", "--max-usd", "0.20"]) == 3  # the $0.35 estimate is over that cap
+    assert main(["-w", str(ws.root), "smoke", "--max-usd", "0.50"]) == 0
+    assert Ledger(ws.ledger_path).spent() - before == pytest.approx(0.50, abs=1e-4)
+    assert main(["-w", str(ws.root), "smoke", "--probe-tools", "--max-usd", "0.10"]) == 0
+    assert Ledger(ws.ledger_path).spent() - before <= 0.60 + 1e-4
+
+
+def test_a_steering_file_that_is_named_but_missing_stops_a_paid_command(ws, tmp_path, capsys):
+    """It was read as empty, so every run was paid for without the corpus's steering."""
+    from wiki.documents import add
+    from wiki.ledger import Ledger
+    from wiki.workspace import init_workspace
+
+    (tmp_path / "doc.txt").write_text("FACT: acme | Acme exists.\n")
+    add(ws, [tmp_path / "doc.txt"])
+    text = ws.toml.read_text()
+    assert "/schemas/sec-deal/steering.md" in text
+    ws.toml.write_text(text.replace("/schemas/sec-deal/steering.md", "/schemas/moved/steering.md"))
+    capsys.readouterr()
+    assert main(["-w", str(ws.root), "build"]) == 1
+    assert "names the steering file" in capsys.readouterr().err and Ledger(ws.ledger_path).entries() == []
+    assert not list(ws.runs.glob("build-*"))
+    ws.toml.write_text(re.sub(r'^steering = .*$', 'steering = ""', text, flags=re.M))
+    assert main(["-w", str(ws.root), "build"]) == 0  # no steering is a choice the owner can make
+    plain = tmp_path / "plain-schema"
+    plain.mkdir()
+    (plain / "_schema.md").write_text((tool_root() / "schemas" / "sec-deal" / "_schema.md").read_text())
+    bare = init_workspace(tmp_path / "bare", plain)  # a schema folder without steering.md
+    assert bare.config().data["steering"] == "" and bare.config().steering_text() == ""

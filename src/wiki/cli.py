@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
 from pathlib import Path
 
@@ -77,8 +78,20 @@ def workspace_of(args) -> Workspace:
     return find_workspace()
 
 
+def _as_interrupt(signum, frame):
+    raise KeyboardInterrupt
+
+
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
+    # A kill (SIGTERM) or a closed terminal (SIGHUP) ends the command as Ctrl-C does: its runs are stopped and
+    # ledgered and the lock is released. Left to their defaults, they ended it with neither.
+    previous = {}
+    for name in ("SIGTERM", "SIGHUP"):
+        try:
+            previous[getattr(signal, name)] = signal.signal(getattr(signal, name), _as_interrupt)
+        except (AttributeError, ValueError):  # no such signal here, or not the main thread
+            pass
     try:
         return dispatch(args)
     except WikiError as why:
@@ -87,6 +100,9 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         print("wiki: interrupted", file=sys.stderr)
         return 130
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 def dispatch(args) -> int:
@@ -147,9 +163,9 @@ def _run(ws, args) -> int:
 
         if args.probe_tools:
             return probe_tools(ws, estimate_only=args.estimate, model=args.model,
-                               approve_over_cap=args.approve_over_cap)
+                               approve_over_cap=args.approve_over_cap, max_usd=args.max_usd)
         return smoke(ws, estimate_only=args.estimate, model=args.model, approve_over_cap=args.approve_over_cap,
-                     include_long=not args.no_long_prompt)
+                     include_long=not args.no_long_prompt, max_usd=args.max_usd)
     raise WikiError(f"unknown command {args.cmd}")
 
 
@@ -204,7 +220,7 @@ def cmd_status(ws) -> int:
     dreams_file = ws.runs / "dreams.json"
     dreams = json.loads(dreams_file.read_text()) if dreams_file.exists() else []
     print(f"Last dream: {dreams[-1]['ts']} ({dreams[-1]['status']})" if dreams else "Last dream: none")
-    d = next((x for x in reversed(dreams) if x["status"] in ("review", "failed-check")), None)
+    d = next((x for x in reversed(dreams) if x["status"] in ("review", "failed-check", "running")), None)
     branches = gitops.branches(ws.repo, "dream/*")
     print(f"Open review branch: {d['branch']} ({d['status']})" if d else
           ("Open review branch: " + ", ".join(branches) if branches else "Open review branch: none"))

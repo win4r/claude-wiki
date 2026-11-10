@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 import statistics
 import tempfile
 import tomllib
-from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
 from pathlib import Path
 
 from . import WikiError
@@ -15,7 +14,7 @@ from . import cost as cost_mod
 from .ask import MODES, ask_once
 from .ledger import Ledger
 from .prompts import render, write_prompt
-from .runner import Runner, RunSpec
+from .runner import Runner, RunSpec, run_all
 from .workspace import private_dir
 
 KINDS = {"lookup", "cross-document", "trap"}
@@ -32,12 +31,16 @@ def load_questions(path: Path) -> list[dict]:
         for key in ("id", "kind", "question", "criteria"):
             if key not in q:
                 raise WikiError(f"{path}: question {q.get('id', '?')} has no {key}")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", str(q["id"])):  # an id names its runs' files
+            raise WikiError(f"{path}: question id {q['id']!r} may hold only letters, digits, '.', '_' and '-'")
         if q["kind"] not in KINDS:
             raise WikiError(f"{path}: question {q['id']} has kind {q['kind']!r}; use one of {sorted(KINDS)}")
         if q["id"] in seen:
             raise WikiError(f"{path}: duplicate id {q['id']}")
         if not q["criteria"]:
             raise WikiError(f"{path}: question {q['id']} has no criteria")
+        if not isinstance(q["criteria"], list) or not all(isinstance(c, str) and c.strip() for c in q["criteria"]):
+            raise WikiError(f"{path}: question {q['id']}: criteria must be a list of sentences, one per point")
         seen.add(q["id"])
     if not qs:
         raise WikiError(f"{path}: no [[question]] entries")
@@ -129,7 +132,8 @@ def report_markdown(name: str, summary: dict, records: list[dict]) -> str:
         lines.append(
             f"| {mode} | {m['score']:.0%} | {m['criteria_met']}/{m['criteria_total']} | "
             f"{cost_mod.usd_fine(m['median_cost_usd'])} | {cost_mod.usd_fine(m['mean_cost_usd'])} | "
-            f"{m['traps_refused']}/{m['traps']} | {'-' if mode == 'sources' else (f'{be:,.0f}' if be else 'never')} |")
+            f"{m['traps_refused']}/{m['traps']} | "
+            + ("-" if "break_even_answers" not in m else f"{be:,.0f}" if be is not None else "never") + " |")
     lines.append("")
     kinds = sorted({k for m in summary["modes"].values() for k in m.get("by_kind", {})})
     if kinds:
@@ -212,7 +216,7 @@ def run_eval(ws, file: Path, estimate_only: bool = False, max_usd: float | None 
     if estimate_only:
         return 0
     from . import gitops
-    from .phases import latest_unfinished
+    from .phases import latest_unfinished, new_id
 
     reads_wiki = any(m in ("wiki", "both") for m in modes)
     if reads_wiki:  # the report names the commit its answers read, so that commit must be the wiki they read
@@ -224,7 +228,11 @@ def run_eval(ws, file: Path, estimate_only: bool = False, max_usd: float | None 
         if unfinished is not None:
             raise WikiError(f"A build is unfinished ({unfinished.parent.name}); finish it with wiki build --resume "
                             "before an eval of the wiki.")
-    eval_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    unfinished_git = gitops.unfinished_operation(ws.repo)
+    if unfinished_git:  # no commit can be made until it ends: every run would be paid for, then the report not committed
+        raise WikiError(f"repo/ is in the middle of {unfinished_git}, so the report could not be committed. Finish "
+                        "it or abort it first (for a merge: git -C repo merge --abort).")
+    eval_id = new_id(lambda ts: (ws.runs / "eval" / ts).exists())
     stem = f"report-{path.stem}-{eval_id}"
     report_paths = [f"eval/{stem}.json", f"eval/{stem}.md"]
     if path.resolve().is_relative_to(ws.repo.resolve()):
@@ -257,8 +265,7 @@ def run_eval(ws, file: Path, estimate_only: bool = False, max_usd: float | None 
         print(f"  {q['id']} {m}: {grade} {cost_mod.usd_fine(rec['cost_usd'])}", flush=True)
         return rec
 
-    with ThreadPoolExecutor(max_workers=max(1, concurrency or int(cfg.runner("concurrency", 4)))) as pool:
-        records = list(pool.map(one, jobs))
+    records = run_all(runner, one, jobs, concurrency or int(cfg.runner("concurrency", 4)))
     build_cost = ledger.spent_where(command="build")
     summary = score(records, build_cost)
     summary["file"] = path.name

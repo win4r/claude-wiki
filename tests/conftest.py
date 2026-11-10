@@ -1,9 +1,12 @@
 import atexit
 import os
 import shutil
+import signal
 import stat
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -91,6 +94,34 @@ def fake_claude(request, tmp_path, monkeypatch):
     for k in ("WIKI_WORKSPACE", "WIKI_FAKE_MISBEHAVE", "WIKI_FAKE_COST", "WIKI_FAKE_VERSION"):
         monkeypatch.delenv(k, raising=False)
     return wrapper
+
+
+def interrupted(fn, ready, timeout: float = 20.0):
+    """Call fn() here, in the main thread, and press Ctrl-C (SIGINT to this process) once ready() holds, or after
+    `timeout` seconds if it never does. Returns what fn raised, or None if it returned."""
+    cancel, sent = threading.Event(), threading.Event()
+
+    def press():
+        end = time.monotonic() + timeout
+        while not cancel.is_set() and time.monotonic() < end and not ready():
+            time.sleep(0.05)
+        if not cancel.is_set():
+            sent.set()
+            os.kill(os.getpid(), signal.SIGINT)
+
+    presser = threading.Thread(target=press, daemon=True)
+    presser.start()
+    try:
+        try:
+            fn()
+        finally:
+            cancel.set()
+            presser.join()
+            if sent.is_set():
+                time.sleep(0.2)  # a signal sent as fn returned still lands inside this try
+    except BaseException as why:
+        return why
+    return None
 
 
 def set_runner(ws, **values):

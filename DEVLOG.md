@@ -575,6 +575,149 @@ Proposals, grouped by what each needs:
 Tests: 151 (149 passed, 2 live tests skipped). Cost: $0.00 by the ledgers, plus about $0.04 to $0.11
 unledgered (the incident above). Total spent so far: $17.15 of $50 by the ledgers; at most $17.26 in all.
 
+## After M5: whole-project review (2026-11-10)
+
+The owner asked for a review of the whole project, with bugs and optimizations fixed without waiting for
+approval. I read every source module against SPEC.md. Three reviewers each read one group of modules on a copy
+of their own, offline, with a fake key and a canary in place of claude. They reported 32 findings: 24 open, and
+8 that I had fixed by then. All 24 are fixed, one of them in part (below), along with 4 points from their
+unverified lists and what my own reading found. Every finding was reproduced through the real code path before
+it was fixed, by me or by the reviewer who reported it. No paid run was made.
+
+Stopping a command:
+- **Ctrl-C stops a command, and nothing more is paid for.** `runner.run_all` now runs every pool of runs (build
+  phases, eval answers, dream analysts). On Ctrl-C it stops the running runs (SIGINT, then SIGTERM), starts none
+  of the waiting ones, and a stopped run is never retried. Before:
+  - A build retried each run that Ctrl-C cut short, and did not come back to the prompt until the retries ended.
+  - An eval started a grader for each answer that was cut short, and paid for it.
+  When one task raises instead (a run changed its input, a git error), no further run starts and the running
+  ones finish, so their work is kept.
+- **A kill or a closed terminal ends a command the same way.** SIGTERM and SIGHUP used to end `wiki` at once:
+  no ledger line for the runs in flight, the runs still going, and the lock left behind.
+- **An interrupted run is in the ledger.** `wiki ask` stopped by Ctrl-C left no ledger line for a run that had
+  spent money. The run is now stopped and recorded as `interrupted`, charged its full cap when it sent no
+  result, as SPEC says of unknown spend.
+
+Dreams:
+- **`--accept` merges only what it checked.** It checked the files in the dream's worktree and merged the branch
+  tip. A tip that failed `check --against` could be merged by restoring the file without committing, and an
+  edit that was not committed was checked, left out of the merge, and deleted with the worktree. Accept now
+  refuses unless the worktree is at the branch tip with nothing uncommitted.
+- **`--accept` leaves main as it was when the merge fails.** When main had changed since the dream started (a
+  build, say), accept removed the dream's worktree, then left repo/ in the middle of a merge with conflict
+  markers in manifest.json. It now merges first, aborts a merge that fails, and says to discard the dream.
+- **A dream that was cut short can be discarded.** Its status stayed `running`, so `--discard` said no dream was
+  open, and its branch and worktree stayed.
+- **A failed analyst fails the dream.** It was read as "no findings": the dream passed, and accepting it used up
+  transcripts no analyst had read.
+- **A failed Link run stops the dream.** It went on to pay for Compile and Index, and only then failed its check.
+- **The estimate and the budgets follow the ledger** (SPEC.md:314). The estimate stayed at $1 plus $0.15 a
+  transcript, so 14 waiting transcripts stopped at the $3 cap, and Index got a fixed share whatever Index had
+  cost. `cost.dream_task_estimates` now gives each run its ledger average, or its starting figure.
+- **A dream splits a long escalations.md as a build does.** Without that, no dream on the core wiki could pass
+  its check: its page needs splitting.
+
+Documents:
+- **A document added again unchanged on a later day stays unchanged.** A document with no [SOURCE] line of its
+  own gets `added: <today>` in its text, so on a later day it counted as changed and the next build paid to
+  extract and check it again. It now keeps the day it has while its text is the same. The example filings carry
+  their own line, so M5 never met this; the owner's documents in M6 would have.
+- **`wiki add` refuses before it writes.** One file it could not convert, or two files making one slug, stopped
+  it with the earlier documents already replaced in docs/ and the manifest not saved.
+- **Two files of one name in different folders are refused.** The second silently replaced the first.
+- **A document added again before `--resume` is extracted again.** The resumed build took its finished tasks
+  from state.json and filed the corrected document under its new sha256 with the old facts. Still open: a
+  document that shrinks to fewer units before the resume has its new unit wait for the next build.
+- **A document split as before again is live again.** After shrinking to one unit and growing back, every unit
+  stayed `removed`: no build filed it and the index left it out.
+- **Conversion:** UTF-16 text became its letters with a NUL between each; HTML whose `<head>` is never closed
+  became empty; a damaged .docx, .xlsx, .pptx or .pdf, or an .eml in a charset Python does not know, ended
+  `wiki add` in a traceback. Files under a dot-folder are no longer added.
+
+Build and check:
+- **Errors are caught at the run that makes them.** Three kinds passed their run's checks and failed the check
+  that ends the build, after every later phase was paid for, and a resume then had nothing left to run:
+  - Link giving a slug a second row;
+  - a per-unit file over 100 KB;
+  - an escalations.md over 100 KB with no `### ` entry to split at. The Index prompt now names that heading.
+- **A Compile run may not leave a picture empty** (a proposal of the last entry). Such a run counted as done,
+  and the next build paid for its pages again. compile.md now asks for at least one line.
+- **Old escalations pages are not appended to a page Index wrote whole.** On the build after a split, the
+  continuation pages were added to the new page: on a copy of the core wiki, a page written whole with its 372
+  entries came out as 640.
+- **`wiki check` keeps tags to their fields:** a `section` outside contracts/ and a date that is no date are
+  errors, and tag errors give the file's line number, as the other rules do.
+- **A lifecycle mark counts only inside a tag.** `| retracted: <date>` added to a line's text passed
+  `check --against` and the writers' guards as if it were a mark.
+- **A slug that ends like a fact page's name** (`key-facts-2024`) is an entity page; it failed the final check.
+- **`wiki build --resume` says what it may spend** and takes `--max-usd`; it printed no figure and ignored it.
+
+Runner, eval and ask:
+- A run with no system/init event failed open: it passed as a success though nothing showed its tools. It is now
+  `bad_tools`. A plugin listed by name crashed the check.
+- A result whose cost cannot be read is charged its cap; it used to raise before the ledger line.
+- A steering file that wiki.toml names but that is missing stops a paid command; it was read as empty.
+- A relative `api_key_settings` is taken from the workspace folder; a run's working directory is a worktree.
+- `wiki eval` refuses while git is in the middle of a merge, cherry-pick, revert or rebase (a proposal of the
+  last entry): every run was paid for and the report then not committed. It also refuses a question id that
+  cannot name a file, and criteria given as one string, of which each character was graded.
+- The eval report's break-even column says `-` without a sources baseline, where it said "never".
+- Ids in a malformed source tag are compared with the manifest too: a second id in one tag, or one with a
+  capital or a space, was never reported. On the 354 stored eval answers of both workspaces, no answer's verdict
+  changes.
+- `wiki smoke` keeps its budgets within its cap, `--max-usd` and what is left of the total; they were $0.70
+  whatever those said.
+- Two commands in one second shared a run id, and the second wrote into the first's folder. A command now waits
+  for an id of its own.
+- Smaller: a manifest.json.tmp left by a killed write goes when the lock is taken; a `batch_chars` too small to
+  hold a part's [SOURCE] line is refused, where splitting looped for ever; the runner reads a stream as UTF-8
+  whatever the locale; `claude-fable-5-2` has its own starting prices; two unused functions left the runner.
+
+Faster, with the same results:
+- `wiki check --against` read the base's copy of every per-unit file with one git process each. It now compares
+  blob ids first and reads only files that changed: 1.88 s to 0.13 s on the core wiki.
+- Compile parsed a per-unit file again for every heading in it: 0.28 s to 0.04 s on the core wiki.
+- `retry_reason` took quadratic time on a long run of characters without spaces (a proposal of the last entry):
+  9 s on 60,000 characters, now under a millisecond, with the same results on 300,000 random strings.
+- On copies of both real wikis, `wiki check`, `check --against` three base commits, and Compile's page groups
+  are identical before and after this entry's changes.
+
+Changes a paid run has not yet exercised:
+- Two prompts changed by a clause each: compile.md ("at least one line") and the escalations rules in the Index
+  prompt (the `### <rank>. <title>` heading, which M5's Index used unasked).
+- Stricter run checks (size, tag fields, an empty picture, a second row) can reject a run that used to pass. A
+  rejected run is retried once and told why.
+- Whether the real Index rewrites a split escalations.md whole, and what a dream's Index costs on the core
+  wiki, need a paid run to see.
+
+Tests:
+- 196 (194 passed, 2 live tests skipped), up from 151; the suite passed twice in a row. Each of 74 mutants, one
+  per fix or guard of this entry, was caught by the test written for it.
+- Tests that press Ctrl-C send the test process a real SIGINT (`conftest.interrupted`).
+- The fake claude's `badtools` run sleeps 60 s, not 5, before the runner stops it; on a busy machine the 5 s
+  ended first (a proposal of the last entry).
+- The fixture's live branch is checked offline (a proposal of the last entry): the live check runs in a pytest
+  of its own with a made-up key and no claude on PATH.
+- No run reached the real claude: the canary logged no call, and both workspace ledgers are unchanged.
+
+Proposals:
+- Refuse `wiki build` and `wiki add` while a dream is open for review, or rebase the dream. A build on main
+  makes the dream unmergeable (both change manifest.json), and the dream's cost is then lost.
+- A way to finish a build whose final check fails: every phase is done by then, so a resume runs nothing.
+- Take a document that shrinks before a resume into the resumed build, or refuse that add.
+- Hold the lock with `flock`. Two commands that meet a dead holder's lock at the same moment can both enter;
+  shown only with a delay injected.
+- The cap is checked, then the run made, per worker thread, so parallel runs can pass a cap together by up to
+  their budgets. The 10% held back covers the usual case.
+- Splitting counts characters and batching counts bytes, so units of CJK text come out about three times the
+  planned size.
+- facts_sha covers a row's description, so a Link run that rewords one would trigger paid Compile runs.
+- `wiki check` hashes _schema.md after newline translation; a change of line endings alone passes it while the
+  build's own check stops.
+- `wiki smoke` exits 0 when its checks fail.
+
+Cost: $0.00. Total spent so far: $17.15 of $50 by the ledgers; at most $17.26 in all.
+
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
 M2, M3 and M4 each end in paid runs, and M0's live checks come first, so these milestones are not done. Their

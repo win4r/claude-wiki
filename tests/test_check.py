@@ -121,6 +121,44 @@ def test_against_allows_only_lifecycle_additions(tmp_path):
     assert [x for x in run_checks(w, manifest(), repo=repo, against=base) if x.rule == "against"]
 
 
+def test_against_reads_the_base_copy_only_of_files_that_changed(tmp_path, monkeypatch):
+    """check --against used to start one git process for every per-unit file of the base, changed or not."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    gitops.init_repo(repo)
+    files = good_wiki()
+    for n in range(2, 12):
+        files[f"notes/u{n}.md"] = files["notes/u1.md"].replace("name: u1", f"name: u{n}")
+    w = write(repo, files)
+    gitops.commit_all(repo, "base")
+    base = gitops.head(repo)
+    read, real = [], gitops.show
+    monkeypatch.setattr(gitops, "show", lambda r, ref, path: read.append(path) or real(r, ref, path))
+    assert not [x for x in run_checks(w, manifest(), repo=repo, against=base) if x.rule == "against"]
+    assert read == []
+    notes = w / "notes" / "u7.md"
+    notes.write_text(notes.read_text().replace("- Fact. [source", "- Fact rewritten. [source"))
+    found = [x for x in run_checks(w, manifest(), repo=repo, against=base) if x.rule == "against"]
+    assert read == ["wiki/notes/u7.md"] and [x.path for x in found] == ["notes/u7.md"]
+    assert gitops.blob_id(b"hello\n", "0" * 40) == "ce013625030ba8dba906f756967f9e9ca394464a"  # git hash-object's id
+
+
+def test_tags_keep_to_their_fields_and_errors_give_the_files_line(tmp_path):
+    """A `section` outside contracts/ and a date that is no date passed, and a tag error counted its line from the
+    end of the frontmatter while the other rules count from the top of the file."""
+    files = good_wiki()
+    files["notes/u1.md"] = files["notes/u1.md"].replace(
+        "- Fact. [source: u1 | as-of: 2024-01-01]",
+        "- Fact. [source: u1 | as-of: 2024-01-01 | section: 2.1]\n- Dated. [source: u1 | as-of: 2024-13-45 | valid_to: 0000-00-00]\n- No tag.")
+    found = [x.message for x in run_checks(write(tmp_path, files), manifest()) if x.path == "notes/u1.md"]
+    lines = files["notes/u1.md"].splitlines()
+    at = lambda text: lines.index(next(ln for ln in lines if ln.startswith(text))) + 1  # noqa: E731
+    assert f"line {at('- Fact.')}: a tag has a section only in contracts/" in found
+    assert f"line {at('- Dated.')}: '2024-13-45' is not a date" in found and f"line {at('- Dated.')}: '0000-00-00' is not a date" in found
+    assert f"line {at('- No tag.')}: fact line without a valid source tag: '- No tag.'" in found and len(found) == 4
+    assert not errors(run_checks(write(tmp_path / "ok", good_wiki()), manifest()))  # a section in contracts/ stands
+
+
 def test_against_unknown_ref(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -181,6 +219,53 @@ def test_escalations_split_keeps_every_entry_and_passes_check(tmp_path):
 
 ALIASED = page("_aliases", "| slug | type | names | proposed | description |\n| --- | --- | --- | --- | --- |\n"
                            "| acme | company | [\"Acme\"] | acme, acme-inc, u1#acme-co | The company |\n")
+
+
+def test_escalations_pages_from_an_earlier_split_are_not_added_to_a_page_written_whole(tmp_path):
+    """On a build after the one that split escalations.md, Index writes the page whole again; the old continuation
+    pages were then appended to it, so entries were written twice and the pages grew with every build."""
+    import re
+
+    from wiki.compile import CONTINUED_MARK, split_escalations
+
+    files = good_wiki()
+    entries = "".join(f"### {i}. Flag {i} — [[acme]]\nWhy it matters: {'z' * 600}\n"
+                      f"- Flag {i}. [source: u1 | as-of: 2024-01-01]\n\n" for i in range(1, 301))
+    whole = page("escalations", "## Digest\n" + "".join(f"{i}. Flag {i}\n" for i in range(1, 301)) + "\n## Entries\n" + entries)
+    files["escalations.md"] = whole
+    w = write(tmp_path, files)
+    split_escalations(w)
+    count = lambda: sorted(int(n) for p in w.glob("escalations*.md") for n in re.findall(r"^### (\d+)\.", p.read_text(), re.M))  # noqa: E731
+    assert count() == list(range(1, 301)) and CONTINUED_MARK in (w / "escalations.md").read_text()
+    split_escalations(w)  # a resumed build: the program's own split is still in place, and is put back together
+    assert count() == list(range(1, 301))
+    (w / "escalations.md").write_text(whole)  # the next build's Index run writes the page whole
+    split_escalations(w)
+    assert count() == list(range(1, 301))
+    (w / "escalations.md").write_text(whole.replace("### ", "## "))  # entries the program cannot split at
+    stale = sorted(p.name for p in w.glob("escalations-*.md"))
+    assert split_escalations(w) == [] and (w / "escalations.md").read_text() == whole.replace("### ", "## ")
+    assert sorted(p.name for p in w.glob("escalations-*.md")) == stale
+
+
+def test_a_slug_that_ends_like_a_fact_page_is_an_entity_page(tmp_path):
+    """key-facts-2024 was taken for a fact page of an entity `key`, and failed the check that ends a build."""
+    from wiki.compile import compile_pages
+
+    files = good_wiki()
+    files["notes/u1.md"] = files["notes/u1.md"].replace("## acme", "## key-facts-2024")
+    files["_aliases.md"] = files["_aliases.md"].replace("| acme | company | [\"Acme\"] | acme |", "| key-facts-2024 | company | [\"Acme\"] | key-facts-2024 |")
+    del files["entities/acme.md"]
+    files["relations/u1.md"] = page("u1", "- [[key-facts-2024]] | owns | [[key-facts-2024]] [source: u1 | as-of: 2024-01-01]\n")
+    files["_index.md"] = page("_index", "## Where to start\n- [[key-facts-2024]]\n## Units\n- u1: notes/u1.md\n")
+    w = write(tmp_path, files)
+    res = compile_pages(w, {})
+    assert res.needs_picture == ["key-facts-2024"] and (w / "entities" / "key-facts-2024.md").exists()
+    found = run_checks(w, manifest())
+    assert not errors(found), [str(x) for x in errors(found)]
+    assert not [x for x in found if x.rule == "link"]
+    (w / "notes" / "u1.md").write_text(page("u1", "## red-flags\n- Flag. [source: u1 | as-of: 2024-01-01]\n"))
+    assert compile_pages(w, {}).removed == ["key-facts-2024"]  # and it is reported when its facts go
 
 
 def test_links_resolve_through_aliases_and_pictures_hold_list_items(tmp_path):
@@ -457,3 +542,22 @@ def test_a_picture_link_resolves_only_where_every_cited_unit_agrees():
     conflict = ("- CONFLICT: [[acme-co]] cap $1M [source: u1 | as-of: 2024-01-01] vs $2M "
                 "[source: u2 | as-of: 2024-01-01]")
     assert normalize_picture(conflict, r) == conflict  # its units disagree, so the link stays as written
+
+
+def test_compile_parses_each_per_unit_file_once(tmp_path, monkeypatch):
+    """It used to parse a file again for every heading in it."""
+    from wiki import compile as compile_mod
+
+    files = good_wiki()
+    body = "".join(f"## e{n}\ntype: company\naliases: []\n- Fact {n}. [source: u1 | as-of: 2024-01-01]\n" for n in range(40))
+    files["notes/u1.md"] = page("u1", body)
+    files["addenda/u1.md"] = page("u1", "## e3\n- More on e3. [source: u1 | as-of: 2024-01-01]\n")
+    files["_aliases.md"] = page("_aliases", "| slug | type | names | proposed | description |\n| --- | --- | --- | --- | --- |\n"
+                                + "".join(f"| e{n} | company | [] | e{n} | Entity {n} |\n" for n in range(40)))
+    calls, real = [], compile_mod.parse_sections
+    monkeypatch.setattr(compile_mod, "parse_sections", lambda text: calls.append(1) or real(text))
+    by_slug, _ = compile_mod.collect(files)
+    assert len(calls) == 2  # notes/u1.md and addenda/u1.md
+    assert len(by_slug) == 40 and all(entry["groups"]["u1"] for entry in by_slug.values())
+    assert by_slug["e3"]["groups"]["u1"] == ["- Fact 3. [source: u1 | as-of: 2024-01-01]",
+                                             "- More on e3. [source: u1 | as-of: 2024-01-01]"]

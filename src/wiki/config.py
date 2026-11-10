@@ -141,7 +141,12 @@ class Config:
 
     def steering_text(self) -> str:
         p = self.resolve_path("steering")
-        return p.read_text() if p and p.exists() else ""
+        if p is None:
+            return ""
+        if not p.is_file():  # read as empty, every run would be paid for without the corpus's steering
+            raise WikiError(f"{self.path} names the steering file {p}, which is not there. Correct the path, or set "
+                            'steering = "" to run without one.')
+        return p.read_text()
 
     @property
     def escalations(self) -> bool:

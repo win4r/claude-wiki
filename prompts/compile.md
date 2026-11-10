@@ -6,7 +6,7 @@ markers included, must stay byte for byte as it is. Use the Edit tool on the tex
 For each page:
 1. Read the page, then read the fact lines its `## Sources` table points to (open each listed file and read the
    section under the listed heading; for relations, the lines naming any `[[...]]` target its row lists).
-2. Between its markers, write at most 30 lines: the facts a reader most likely wants, current values first, each
+2. Between its markers, write at least one line and at most 30: the facts a reader most likely wants, current values first, each
    a list item ending with the source tag of the fact line it comes from, copied exactly
    (`[source: <unit> | as-of: <date>]`, with any valid_from/valid_to it carries). A superseded value gets one
    line saying what replaced it. Where two fact lines disagree and neither is the later correction of the other,

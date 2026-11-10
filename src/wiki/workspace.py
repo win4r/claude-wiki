@@ -165,6 +165,8 @@ class Workspace:
         with os.fdopen(fd, "w") as handle:
             json.dump({"pid": os.getpid(), "command": command}, handle)
         try:
+            # a manifest write that was killed leaves its temporary file; whoever holds the lock knows it is stale
+            self.manifest_path.with_name(self.manifest_path.name + ".tmp").unlink(missing_ok=True)
             yield
         finally:
             path.unlink(missing_ok=True)
@@ -209,7 +211,8 @@ def init_workspace(root: Path, schema_dir: Path | None = None, tier: str = "othe
         raise WikiError(f"No _schema.md in {schema_dir}")
     steering_text = steering_src.read_text() if steering_src.exists() else ""
     escalations = "escalations.md" in steering_text
-    ws.toml.write_text(config_mod.render(str(schema_src.resolve()), str(steering_src.resolve()), tier, escalations))
+    steering_path = str(steering_src.resolve()) if steering_src.exists() else ""  # "" is no steering
+    ws.toml.write_text(config_mod.render(str(schema_src.resolve()), steering_path, tier, escalations))
     (ws.root / "CLAUDE.md").write_text(CLAUDE_MD)
     ws.docs.mkdir(exist_ok=True)
     private_dir(ws.runs)

@@ -242,3 +242,64 @@ def test_a_manifest_save_that_fails_keeps_the_old_manifest_and_leaves_no_partial
     with pytest.raises(OSError, match="No space"):
         Manifest.new("new").save(path)
     assert path.read_text() == before and [p.name for p in path.parent.iterdir()] == ["manifest.json"]
+
+
+def test_a_document_split_as_before_again_gets_its_units_back(tmp_path):
+    """A document that shrank to one unit and then grew back used to keep every unit "removed": it had no live
+    unit, so no build filed it and the index left it out."""
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    m = Manifest.new("sha")
+    long = "[SOURCE: s]\n\n" + ("y" * 99 + "\n") * 80
+    parts = [u for u, _ in m.add_document("a.txt", long, docs, 3000)]
+    assert len(parts) == 3
+    m.set_status(parts, "filed")
+    m.add_document("a.txt", "[SOURCE: s]\n\nshort\n", docs, 3000)
+    assert m.live_units() == ["a"] and all(m.units[u]["status"] == "removed" for u in parts)
+    m.set_status(["a"], "filed")
+    res = dict(m.add_document("a.txt", long, docs, 3000))
+    assert res == {**{u: "changed" for u in parts}, "a": "removed"}
+    assert m.live_units() == parts and m.pending_units() == parts  # live again, and filed again by the next build
+    m.set_status(parts + ["a"], "filed")  # a build that still lists the dropped unit does not bring it back
+    assert m.units["a"]["status"] == "removed" and m.live_units() == parts and m.pending_units() == []
+    m.set_status(parts, "changed")
+    assert m.add_document("a.txt", long, docs, 3000) == [(u, "unchanged") for u in parts]
+
+
+def test_a_trial_add_writes_no_file_and_a_tiny_batch_size_is_refused(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    m = Manifest.new("sha")
+    assert m.add_document("a.txt", "[SOURCE: s]\n\nbody\n", docs, 3000, write=False) == [("a", "new")]
+    assert list(docs.iterdir()) == []
+    with pytest.raises(WikiError, match="batch_chars"):  # it used to cut the first line for ever
+        split_units("a", "[SOURCE: s | a long source line]\n\n" + "body\n" * 40, 60)
+
+
+def test_a_lifecycle_mark_counts_only_inside_a_tag():
+    """`| retracted: <date>` added to a line's text was stripped like a mark in its tag, so the reworded line
+    passed check --against and the writers' guards."""
+    base = "- EBITDA | $235.4M | FY2023 [source: u | as-of: 2024-05-13]"
+    assert lifecycle_only_added(base, "- EBITDA | $235.4M | FY2023 [source: u | as-of: 2024-05-13 | retracted: 2024-12-31]")
+    assert not lifecycle_only_added(base, "- EBITDA | $235.4M | FY2023 | retracted: 2024-12-31 [source: u | as-of: 2024-05-13]")
+    assert strip_lifecycle("- a | valid_to: 2024-01-01 [source: u | as-of: 2024-05-13 | valid_to: 2024-06-01]") \
+        == "- a | valid_to: 2024-01-01 [source: u | as-of: 2024-05-13]"
+    conflict = "- CONFLICT: cap $A [source: u | as-of: 2024-01-01] vs $B [source: v | as-of: 2024-02-01]"
+    assert lifecycle_only_added(conflict, conflict.replace("2024-01-01]", "2024-01-01 | retracted: 2024-03-01]"))
+
+
+def test_utf16_text_html_without_a_closed_head_and_files_that_cannot_be_read(tmp_path):
+    """UTF-16 text became its letters with a NUL between each, a page whose <head> is never closed became empty,
+    and a damaged file ended wiki add in a traceback."""
+    (tmp_path / "export.csv").write_bytes("name,price\r\nAcme,44\r\n".encode("utf-16"))
+    assert convert(tmp_path / "export.csv") == "name,price\nAcme,44\n"
+    (tmp_path / "plain.txt").write_bytes(b"caf\xc3\xa9\r\nline\rlast\n")
+    assert convert(tmp_path / "plain.txt") == "caf\u00e9\nline\nlast\n"
+    (tmp_path / "page.html").write_text("<html><head><title>T</title><body><p>Acme agreed.</p><script>x()</script></body>")
+    assert convert(tmp_path / "page.html") == "Acme agreed."
+    (tmp_path / "mail.eml").write_bytes(b"From: a@example.com\nSubject: Hi\nContent-Type: text/plain; charset=x-unknown\n\nThe body.\n")
+    assert "Subject: Hi" in convert(tmp_path / "mail.eml") and "The body." in convert(tmp_path / "mail.eml")
+    pytest.importorskip("docx")
+    (tmp_path / "broken.docx").write_bytes(b"not a zip file")
+    with pytest.raises(WikiError, match="broken.docx: could not be read as .docx"):
+        convert(tmp_path / "broken.docx")

@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 import json
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
 from . import WikiError, gitops
 from . import check as check_mod
 from . import cost as cost_mod
+from .compile import split_escalations
 from .ledger import Ledger
 from .phases import (
-    Context, WriterTask, index_task, input_folder, lint_changed, link_task, now_id, phase_compile, run_parallel,
+    Context, WriterTask, index_task, input_folder, lint_changed, link_task, new_id, phase_compile, run_parallel,
     survival_problems,
 )
 from .prompts import render, write_prompt
-from .runner import Runner, RunSpec
+from .runner import Runner, RunSpec, run_all
 from .workspace import make_read_only, private_dir, remove_tree
 
 TAG_PREFIX = "dream-accepted-"
@@ -160,8 +160,10 @@ def save_dreams(ws, dreams: list[dict]) -> None:
 
 
 def open_dream(ws) -> dict | None:
+    """The dream whose branch is still there: one under review, one that failed, or one that was cut short (its
+    status stayed "running"; whoever holds the workspace lock knows no dream is running now)."""
     for d in reversed(load_dreams(ws)):
-        if d["status"] in ("review", "failed-check"):
+        if d["status"] in ("review", "failed-check", "running"):
             return d
     return None
 
@@ -170,11 +172,16 @@ def dream(ws, estimate_only=False, max_usd=None, model=None, concurrency=None, a
     cfg = ws.config()
     ledger = Ledger(ws.ledger_path)
     pending = open_dream(ws)
-    if pending:
+    if pending and pending["status"] == "review":
         raise WikiError(f"Dream branch {pending['branch']} is open for review: wiki dream --accept or --discard first.")
+    if pending:
+        raise WikiError(f"Dream branch {pending['branch']} did not finish: wiki dream --discard first.")
     transcripts = collect_transcripts(ws)
     need = int(cfg.runner("dream_min_transcripts", 5))
-    est = cost_mod.estimate_dream(len(transcripts))
+    group = int(cfg.runner("dream_group", 10))
+    models = {r: model or cfg.model(r) for r in ("dream_analyst", "dream_apply", "link", "compile", "index")}
+    averages = ledger.averages()
+    est = cost_mod.estimate_dream(len(transcripts), averages, models, group)
     cap_limit = min(cfg.cap("dream_usd"), max_usd) if max_usd else cfg.cap("dream_usd")
     print(f"{len(transcripts)} ask transcript(s) since the last accepted dream; estimate {cost_mod.usd(est)} "
           f"(cap {cost_mod.usd(cap_limit)})")
@@ -190,18 +197,16 @@ def dream(ws, estimate_only=False, max_usd=None, model=None, concurrency=None, a
     reserve = float(cfg.runner("reserve", 0.10))
     cap = cost_mod.authorize(ledger.spent(), cfg.total_usd, est, cap_limit, approve_over_cap, "this dream", reserve)
 
-    ts = now_id()
+    ts = new_id(lambda ts: (ws.runs / f"dream-{ts}").exists() or gitops.ref_exists(ws.repo, f"dream/{ts}"))
     run_id = f"dream-{ts}"
     branch = f"dream/{ts}"
     base = gitops.head(ws.repo)
     wt = ws.runs / run_id / "branch"
     private_dir(wt.parent)
     gitops.worktree_add(ws.repo, wt, base, branch=branch)
-    group = int(cfg.runner("dream_group", 10))
     groups = [transcripts[i:i + group] for i in range(0, len(transcripts), group)]
-    # shares: analysts, apply, compile and index
-    est_tasks = {f"analyst-{n:02d}": cost_mod.DREAM_PER_TRANSCRIPT_USD * len(g) for n, g in enumerate(groups, 1)}
-    est_tasks.update({"apply": 0.5, "link": 0.1, "compile-01": 0.15, "compile-02": 0.15, "index": 0.2})
+    # shares: analysts, apply, link, compile and index, each in proportion to what such a run has cost here
+    est_tasks = cost_mod.dream_task_estimates([len(g) for g in groups], averages, models)
     shares = cost_mod.share(est_tasks, cap, reserve)
     ctx = Context(ws, "dream", run_id, wt, cfg=cfg, runner=runner, model_override=model, shares=shares, cap=cap)
     record = {"ts": ts, "branch": branch, "base": base, "worktree": str(wt), "status": "running",
@@ -237,8 +242,10 @@ def dream(ws, estimate_only=False, max_usd=None, model=None, concurrency=None, a
             (findings_dir / f"findings-{n:02d}.md").write_text(text + "\n")
             return rr
 
-        with ThreadPoolExecutor(max_workers=ctx.concurrency) as pool:
-            analysts = list(pool.map(analyst, list(enumerate(groups, 1))))
+        analysts = run_all(runner, analyst, list(enumerate(groups, 1)), ctx.concurrency)
+        lost = [f"{a.task_id} ({a.outcome})" for a in analysts if not a.ok]
+        if lost:  # read as "no findings", the dream passed, and accepting it used up transcripts nobody had read
+            raise WikiError(f"analyst run(s) failed: {', '.join(lost)}; their transcripts were not read")
         findings = [ln for p in sorted(findings_dir.glob("*.md")) for ln in p.read_text().splitlines()
                     if ln.strip().startswith("- ") and ln.strip() != "- NONE"]
         make_read_only(findings_dir)
@@ -264,31 +271,37 @@ def dream(ws, estimate_only=False, max_usd=None, model=None, concurrency=None, a
             t = link_task(ctx)
             if t:
                 run_parallel(ctx, [t])
+                if ctx.task_state("link").get("status") != "done":
+                    raise WikiError(f"link failed: {ctx.task_state('link').get('reason')}")
             failed = phase_compile(ctx)
             if failed:
                 raise WikiError(f"compile failed: {', '.join(failed)}")
             run_parallel(ctx, [index_task(ctx)])
             if ctx.task_state("index").get("status") != "done":
                 raise WikiError(f"index failed: {ctx.task_state('index').get('reason')}")
+            split_escalations(ctx.wiki)  # as a build does: a long escalations.md would fail the check below on its size
             ctx.commit(f"dream {ts}: recompile and reindex")
+        # 6. the invariants
+        m = ctx.manifest()
+        findings_check = check_mod.run_checks(wt / "wiki", m, repo=wt, against=base)
+        errs = check_mod.errors(findings_check)
+        (ctx.run_dir / "check.txt").write_text(check_mod.report(findings_check, show=10_000) + "\n")
+        changed = gitops.diff_names(ws.repo, base, branch)
+        diff = gitops.diff_text(ws.repo, base, branch)
+        added = added_source_lines(diff)
+        conflicts = sum(1 for ln in added if "CONFLICT" in ln)
+        retracted = sum(1 for ln in added if "retracted:" in ln)
+        summary = {"findings": len(findings), "files_changed": changed, "conflicts_marked": conflicts,
+                   "lines_retracted": retracted, "check_errors": len(errs), "spent": round(ctx.spent_this_run(), 6)}
+        update(status="review" if not errs else "failed-check", summary=summary)
     except WikiError as why:
         update(status="failed-check", error=str(why), spent=round(ctx.spent_this_run(), 6))
         print(f"Dream {ts} failed: {why}. Inspect branch {branch}, then wiki dream --discard.")
         return 2
-
-    # 6. the invariants
-    m = ctx.manifest()
-    findings_check = check_mod.run_checks(wt / "wiki", m, repo=wt, against=base)
-    errs = check_mod.errors(findings_check)
-    (ctx.run_dir / "check.txt").write_text(check_mod.report(findings_check, show=10_000) + "\n")
-    changed = gitops.diff_names(ws.repo, base, branch)
-    diff = gitops.diff_text(ws.repo, base, branch)
-    added = added_source_lines(diff)
-    conflicts = sum(1 for ln in added if "CONFLICT" in ln)
-    retracted = sum(1 for ln in added if "retracted:" in ln)
-    summary = {"findings": len(findings), "files_changed": changed, "conflicts_marked": conflicts,
-               "lines_retracted": retracted, "check_errors": len(errs), "spent": round(ctx.spent_this_run(), 6)}
-    update(status="review" if not errs else "failed-check", summary=summary)
+    except BaseException as why:  # Ctrl-C, or an error the program did not foresee: the branch can be discarded
+        update(status="failed-check", error=f"stopped before it finished ({type(why).__name__})",
+               spent=round(ctx.spent_this_run(), 6))
+        raise
     print(f"Dream {ts} on branch {branch}: {len(findings)} finding(s), {len(changed)} file(s) changed, "
           f"{conflicts} conflict(s) marked, {retracted} line(s) retracted; spent {cost_mod.usd(summary['spent'])}.")
     for p in changed:
@@ -307,7 +320,8 @@ def accept(ws) -> int:
     if not d:
         raise WikiError("No dream branch is open for review.")
     if d["status"] != "review":
-        raise WikiError(f"Dream {d['branch']} did not pass wiki check --against its base; it can only be discarded.")
+        raise WikiError(f"Dream {d['branch']} did not finish, or did not pass wiki check --against its base; it can "
+                        "only be discarded (wiki dream --discard).")
     if not gitops.is_clean(ws.repo) or gitops.current_branch(ws.repo) != "main":
         raise WikiError("repo/ must be on main with no uncommitted changes to accept a dream.")
     # re-check on the branch tip in case it was edited after the dream
@@ -315,13 +329,25 @@ def accept(ws) -> int:
     from .manifest import Manifest
 
     wt = Path(d["worktree"])
-    findings = check_mod.run_checks(wt / "wiki", Manifest(json.loads(m_text or "{}")), repo=ws.repo, against=d["base"])
+    # the check below reads the worktree's files and the merge takes the branch tip: they must be the same thing
+    if m_text is None or not wt.is_dir() or gitops.head(wt) != gitops.git(ws.repo, "rev-parse", d["branch"]).strip() \
+            or gitops.changed_paths(wt):
+        raise WikiError(f"{wt} is missing, is not at the tip of {d['branch']}, or has changes that are not "
+                        "committed. Commit them on that branch or undo them, then accept again (or wiki dream "
+                        "--discard).")
+    findings = check_mod.run_checks(wt / "wiki", Manifest(json.loads(m_text)), repo=ws.repo, against=d["base"])
     if check_mod.errors(findings):
         print(check_mod.report(findings, show=30))
         raise WikiError("The branch no longer passes wiki check --against its base.")
-    gitops.worktree_remove(ws.repo, wt)
-    gitops.git(ws.repo, "merge", "--no-ff", "-q", "-m", f"Accept dream {d['ts']}", d["branch"])
+    try:
+        gitops.git(ws.repo, "merge", "--no-ff", "-q", "-m", f"Accept dream {d['ts']}", d["branch"])
+    except WikiError as why:  # main moved since the dream started and both changed the same lines
+        gitops.git(ws.repo, "merge", "--abort", check=False)  # main, and the branch under review, stay as they were
+        raise WikiError(f"{d['branch']} does not merge into main, which has changed since the dream started; main "
+                        f"is as it was. Discard the dream (wiki dream --discard) and dream again. git said: "
+                        f"{str(why).splitlines()[-1]}") from None
     gitops.git(ws.repo, "tag", f"{TAG_PREFIX}{d['ts']}")
+    gitops.worktree_remove(ws.repo, wt)
     gitops.git(ws.repo, "branch", "-d", d["branch"])
     dreams = load_dreams(ws)
     for x in dreams:

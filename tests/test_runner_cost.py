@@ -2,13 +2,14 @@
 
 import json
 import os
+import time
 
 import pytest
 
 from wiki import WikiError
 from wiki import cost as cost_mod
 from wiki.ledger import Ledger
-from wiki.runner import ROLE_TOOLS, Runner, RunSpec, parse_stream, parse_version, tools_ok, usage_of
+from wiki.runner import ROLE_TOOLS, Runner, RunSpec, parse_stream, parse_version, run_all, tools_ok, usage_of
 
 
 # --- ledger and caps
@@ -251,3 +252,138 @@ def test_a_rerun_moves_the_earlier_rejection_with_its_run(ws, tmp_path):
     (d / "t1.violations.txt").write_text("rejected\n")  # written by phases after a rejected run
     r.run(spec(ws, tmp_path))
     assert (d / "t1.prev1.violations.txt").read_text() == "rejected\n" and not (d / "t1.violations.txt").exists()
+
+
+# --- an interrupted command
+
+def test_ctrl_c_stops_the_run_and_still_writes_its_ledger_line(ws, tmp_path, monkeypatch):
+    """Ctrl-C used to leave the thread reading the stream with no ledger line for a run that had spent money."""
+    from conftest import interrupted
+
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "hang")
+    r = Runner(ws, ws.config())
+    stream = ws.runs / "r1" / "t1.jsonl"
+    start = time.monotonic()
+    why = interrupted(lambda: r.run(spec(ws, tmp_path, timeout_s=300)), lambda: stream.exists() and stream.stat().st_size)
+    assert isinstance(why, KeyboardInterrupt)
+    assert time.monotonic() - start < 30  # the run was stopped, not left to hang or to reach its timeout
+    lines = Ledger(ws.ledger_path).entries()
+    assert [e["outcome"] for e in lines] == ["interrupted"]
+    assert lines[0]["cost_usd"] == pytest.approx(0.25) and lines[0]["charged_full_cap"] is True  # unknown: its cap
+
+
+def test_a_stopped_runner_starts_no_run_and_charges_nothing(ws, tmp_path):
+    r = Runner(ws, ws.config())
+    assert not r.stopping
+    r.stop_all()
+    rr = r.run(spec(ws, tmp_path))
+    assert rr.outcome == "interrupted" and rr.cost_usd == 0 and not rr.ok and not rr.retryable
+    assert not rr.charged_full_cap and Ledger(ws.ledger_path).entries() == []
+    assert not (ws.runs / "r1" / "t1.cmd.json").exists() and not (ws.runs / "r1" / "t1.jsonl").exists()
+
+
+def test_run_all_keeps_the_items_order_and_starts_nothing_more_once_an_item_raises(ws, tmp_path):
+    r = Runner(ws, ws.config())
+    assert run_all(r, lambda n: n * 2, [3, 1, 2], 2) == [6, 2, 4] and not r.stopping
+
+    def item(n):
+        if n == 0:
+            raise WikiError("the first item fails")
+        return r.run(spec(ws, tmp_path, task_id=f"t{n}"))
+
+    with pytest.raises(WikiError, match="first item"):
+        run_all(r, item, range(8), 1)
+    assert r.stopping
+    lines = Ledger(ws.ledger_path).entries()
+    # at most the one run a worker had taken before the error was seen; it finished, and is kept
+    assert len(lines) <= 1 and all(e["outcome"] == "success" for e in lines)
+
+
+def test_ctrl_c_stops_every_running_run_and_starts_none_of_the_waiting(ws, tmp_path, monkeypatch):
+    from conftest import interrupted
+
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "hang")
+    r = Runner(ws, ws.config())
+    started = lambda: [p for p in (ws.runs / "r1").glob("*.jsonl") if p.stat().st_size]  # noqa: E731
+    why = interrupted(lambda: run_all(r, lambda n: r.run(spec(ws, tmp_path, task_id=f"t{n}", timeout_s=300)),
+                                      range(6), 2), lambda: len(started()) >= 2)
+    assert isinstance(why, KeyboardInterrupt)
+    lines = Ledger(ws.ledger_path).entries()
+    assert sorted(e["task_id"] for e in lines) == ["t0", "t1"]  # the four that waited never ran
+    assert all(e["outcome"] == "interrupted" and e["charged_full_cap"] for e in lines)
+
+
+def test_the_live_branch_gives_a_live_test_the_owners_environment(tmp_path):
+    """The live check above runs here in a pytest of its own, under WIKI_LIVE=1 with a made-up owner key and no
+    claude on PATH, so it spends nothing; without this, only a paid run showed whether the fixture's live branch
+    restores the owner's key, WIKI_CLAUDE_BIN and PATH."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "TMPDIR": str(tmp_path), "WIKI_LIVE": "1",
+           "ANTHROPIC_API_KEY": "made-up-owner-key", "WIKI_CLAUDE_BIN": str(tmp_path / "owners-claude")}
+    node = "tests/test_runner_cost.py::test_a_live_test_runs_only_with_wiki_live_and_then_gets_the_owners_environment"
+    command = [sys.executable, "-m", "pytest", "-rA", "-p", "no:cacheprovider", node]
+    proc = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
+    assert proc.returncode == 0 and f"PASSED {node}" in proc.stdout, proc.stdout + proc.stderr
+    env.pop("WIKI_LIVE")  # and without WIKI_LIVE the same test is skipped, whatever skipif it carries
+    proc = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True)
+    assert proc.returncode == 0 and "SKIPPED" in proc.stdout and "PASSED" not in proc.stdout, proc.stdout + proc.stderr
+
+
+def test_fable_5_2_has_its_own_starting_prices():
+    assert cost_mod.prices_of("claude-fable-5-2")["input"] == 8.0  # it used to be priced as Opus 5.5, at half
+    assert cost_mod.prices_of("claude-fable-5-2")["output"] == 40.0 and cost_mod.prices_of("opus")["input"] == 4.0
+
+
+def test_a_run_no_init_event_vouched_for_fails_and_a_plugin_named_by_a_string_is_a_problem(ws, tmp_path, monkeypatch):
+    """Without a system/init event nothing showed which tools the run had, and it used to pass as a success."""
+    from wiki.runner import init_problems
+
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "noinit")
+    rr = Runner(ws, ws.config()).run(spec(ws, tmp_path))
+    assert rr.outcome == "bad_tools" and not rr.ok and rr.errors == ["no system/init event"]
+    assert rr.cost_usd == 0.01  # it reported its cost, so that is what it is charged
+    assert Ledger(ws.ledger_path).entries()[-1]["init_problems"] == ["no system/init event"]
+    init = {"tools": ["Read", "Glob", "Grep", "EndConversation"], "plugins": [{"name": "p", "path": "builtin"}, "stray"]}
+    assert init_problems("ask", init) == ["plugins ['stray']"]  # it used to raise AttributeError on the string
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "strplugin")
+    rr = Runner(ws, ws.config()).run(spec(ws, tmp_path, task_id="t2"))
+    assert rr.outcome == "bad_tools" and rr.charged_full_cap and "stray-user-plugin" in rr.errors[0]
+
+
+def test_a_result_whose_cost_cannot_be_read_is_charged_its_cap(ws, tmp_path, monkeypatch):
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "badcost")
+    rr = Runner(ws, ws.config()).run(spec(ws, tmp_path))  # it used to raise before the ledger line was written
+    line = Ledger(ws.ledger_path).entries()[-1]
+    assert rr.outcome == "success" and rr.charged_full_cap and rr.cost_usd == pytest.approx(0.25)
+    assert line["cost_usd"] == pytest.approx(0.25) and line["charged_full_cap"] is True
+
+
+def test_a_relative_settings_file_is_named_from_the_workspace(ws, tmp_path):
+    text = ws.toml.read_text()
+    ws.toml.write_text(text.replace('# api_key_settings = "/path/to/settings.json"', 'api_key_settings = "key/settings.json"'))
+    argv = Runner(ws, ws.config()).argv(spec(ws, tmp_path))
+    assert argv[argv.index("--settings") + 1] == str(ws.root / "key" / "settings.json")  # a run's cwd is a worktree
+    ws.toml.write_text(text.replace('# api_key_settings = "/path/to/settings.json"', 'api_key_settings = "/abs/settings.json"'))
+    argv = Runner(ws, ws.config()).argv(spec(ws, tmp_path))
+    assert argv[argv.index("--settings") + 1] == "/abs/settings.json"
+
+
+def test_the_dream_estimate_follows_the_ledger():
+    """It stayed at $1 plus $0.15 a transcript whatever dreams had cost, so 14 waiting transcripts were estimated
+    at $3.10 and stopped at the $3 cap."""
+    models = {"dream_analyst": "haiku", "dream_apply": "haiku", "link": "haiku", "compile": "haiku", "index": "haiku"}
+    assert cost_mod.estimate_dream(14) == pytest.approx(3.10) == cost_mod.estimate_dream(14, {}, models)
+    run = lambda usd: {"n": 1, "per_run": usd, "per_char": None}  # noqa: E731
+    av = {("dream-analyst", "haiku"): run(0.03)}
+    assert cost_mod.estimate_dream(14, av, models) == pytest.approx(3.10)  # no apply run yet: the starting figure
+    av[("dream-apply", "haiku")] = run(0.04)
+    # two groups of analysts, the apply run, then link, two compile runs and index at their starting figures
+    assert cost_mod.estimate_dream(14, av, models) == pytest.approx(2 * 0.03 + 0.04 + 0.10 + 2 * 0.15 + 0.20)
+    av.update({("link", "haiku"): run(0.01), ("compile", "haiku"): run(0.02), ("index", "haiku"): run(0.05)})
+    assert cost_mod.estimate_dream(14, av, models) == pytest.approx(2 * 0.03 + 0.04 + 0.01 + 2 * 0.02 + 0.05)
+    assert cost_mod.estimate_dream(14, av, {**models, "dream_apply": "sonnet"}) == pytest.approx(3.10)
+    assert cost_mod.estimate_dream(5, av, models, group=2) == pytest.approx(3 * 0.03 + 0.04 + 0.01 + 2 * 0.02 + 0.05)

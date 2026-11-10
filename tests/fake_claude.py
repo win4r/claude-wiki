@@ -4,9 +4,13 @@ It reads its task, writes canned files into its working directory, and emits str
 It can misbehave on purpose: WIKI_FAKE_MISBEHAVE="<mode>[:<role>[:<times>]]" with mode one of
 outside, markers, input, fail, noresult, overcap, maxturns, badtools, extras, hang, lifecycle, slugcite,
 slugfail (slugcite, and the citation retry ends over its cap), reword (Check rewrites a filed notes line; Resolve and
-Dream apply rewrite a filed addenda line), plainpic (Compile writes a plain line in a picture), aliaslink (Link
+Dream apply rewrite a filed addenda line), plainpic (Compile writes a plain line in a picture), blankpic (Compile
+leaves its pictures empty), noinit (no system/init event), strplugin (init lists a plugin by name only), badcost (the
+result's cost is not a number), newheading (Dream apply files a fact under a heading no row maps), dupslug (Link gives a slug a second row), bigesc
+(Index writes an escalations.md over 100 KB with no `### ` entry), aliaslink (Link
 proposes the heading acme-co for acme, and Compile links [[acme-co]] in acme's picture); <role> may be
-<role>@<text> to pick only runs whose task contains <text>. WIKI_FAKE_STATE is a folder for
+<role>@<text> to pick only runs whose task contains <text>. Several of these, separated by ";", may be given: the
+first that fits a run decides. WIKI_FAKE_STATE is a folder for
 counters; WIKI_FAKE_COST the cost each run reports.
 
 Fixture documents carry marker lines: ENTITY: slug | type | Name; Name, FACT: slug | text,
@@ -80,7 +84,14 @@ def role_of(task: str) -> str:
 
 
 def misbehaviour(role: str, task: str = "") -> str | None:
-    spec = os.environ.get("WIKI_FAKE_MISBEHAVE", "")
+    for spec in os.environ.get("WIKI_FAKE_MISBEHAVE", "").split(";"):
+        mode = one_misbehaviour(spec.strip(), role, task)
+        if mode:
+            return mode
+    return None
+
+
+def one_misbehaviour(spec: str, role: str, task: str) -> str | None:
     if not spec:
         return None
     parts = spec.split(":")
@@ -247,7 +258,7 @@ def do_resolve(cwd: Path, docs: Path, limit=10, reword: bool = False):
     return f"resolved: {done}"
 
 
-def do_link(cwd: Path, inputs: list[Path], alias_heading: bool = False):
+def do_link(cwd: Path, inputs: list[Path], alias_heading: bool = False, dup_slug: bool = False):
     text = (Path(inputs[0]) / "headings.md").read_text()
     path = cwd / "_aliases.md"
     rows, _ = parse_aliases(path.read_text()) if path.exists() else ([], [])
@@ -269,11 +280,14 @@ def do_link(cwd: Path, inputs: list[Path], alias_heading: bool = False):
                 row.names.append(n)
     if alias_heading and "acme" in by_slug and "acme-co" not in by_slug["acme"].proposed:
         by_slug["acme"].proposed.append("acme-co")
+    if dup_slug and rows:  # a second row for a slug that has one, where its headings belong in the first
+        rows.append(AliasRow(rows[0].slug, rows[0].type, [], [], "the same entity again"))
     path.write_text(render_aliases(rows))
     return f"rows: {len(rows)}"
 
 
-def do_compile(cwd: Path, task: str, bad_markers: bool, plain_line: bool = False, alias_link: bool = False):
+def do_compile(cwd: Path, task: str, bad_markers: bool, plain_line: bool = False, alias_link: bool = False,
+               blank: bool = False):
     pages = re.findall(r"(entities/[a-z0-9-]+\.md)", task)
     for rel in pages:
         p = cwd / rel
@@ -285,6 +299,8 @@ def do_compile(cwd: Path, task: str, bad_markers: bool, plain_line: bool = False
             if len(body) == 2:
                 facts += [ln for ln in body[1].splitlines() if ln.startswith("- ") and "[source:" in ln][:1]
         pic = "\n" + (facts[0] + "\n" if facts else "") + ("Sections: the facts below, by unit.\n" if plain_line else "")
+        if blank:
+            pic = "\n"
         if alias_link and rel == "entities/acme.md" and facts:
             pic += "- Also filed as [[acme-co]]. " + facts[0][facts[0].index("[source:"):] + "\n"
         text = text[:a] + pic + text[b:]
@@ -338,7 +354,8 @@ def do_dream_analyst(add_dirs: list[Path]):
     return f'- MISS: a fact readers missed | unit: {f.stem} | evidence: "see unit" {tag(f.stem, as_of(f.read_text()))}'
 
 
-def do_dream_apply(cwd: Path, add_dirs: list[Path], break_lifecycle: bool, reword: bool = False):
+def do_dream_apply(cwd: Path, add_dirs: list[Path], break_lifecycle: bool, reword: bool = False,
+                   new_heading: bool = False):
     if reword:
         reword_addendum(cwd)
     findings = [ln for d in add_dirs for p in Path(d).glob("findings-*.md") for ln in p.read_text().splitlines()
@@ -349,6 +366,8 @@ def do_dream_apply(cwd: Path, add_dirs: list[Path], break_lifecycle: bool, rewor
         h = first_heading(cwd, unit)
         date = re.search(r"as-of: (\d{4}-\d{2}-\d{2})", f).group(1)
         append_addendum(cwd, unit, h, f"- Dream: a fact readers missed, confirmed in the unit. {tag(unit, date)}")
+        if new_heading:
+            append_addendum(cwd, unit, "newco", f"- A name the readers could not place. {tag(unit, date)}")
         notes = cwd / "notes" / f"{unit}.md"
         lines = notes.read_text().splitlines()
         for i, ln in enumerate(lines):
@@ -393,9 +412,12 @@ def main():
     if mode == "extras":
         init["mcp_servers"] = [{"name": "stray", "status": "connected"}]
         init["plugins"].append({"name": "user-plugin", "path": "/somewhere"})
-    emit(init)
-    if mode in ("badtools", "extras"):
-        time.sleep(5)  # the runner should stop us
+    if mode == "strplugin":
+        init["plugins"].append("stray-user-plugin")
+    if mode != "noinit":
+        emit(init)
+    if mode in ("badtools", "extras", "strplugin"):
+        time.sleep(60)  # the runner stops us at once; a short sleep ended first when the machine was busy
     if mode == "hang":
         signal.signal(signal.SIGINT, lambda *_: sys.exit(130))
         time.sleep(600)
@@ -419,11 +441,15 @@ def main():
     elif role == "resolve":
         text = do_resolve(cwd, add_dirs[0], reword=mode == "reword")
     elif role == "link":
-        text = do_link(cwd, add_dirs, mode == "aliaslink")
+        text = do_link(cwd, add_dirs, mode == "aliaslink", dup_slug=mode == "dupslug")
     elif role == "compile":
-        text = do_compile(cwd, a["task"], mode == "markers", mode == "plainpic", mode == "aliaslink")
+        text = do_compile(cwd, a["task"], mode == "markers", mode == "plainpic", mode == "aliaslink",
+                          blank=mode == "blankpic")
     elif role == "index":
         text = do_index(cwd, add_dirs, a["task"])
+        if mode == "bigesc":
+            (cwd / "escalations.md").write_text(fm("escalations", "ranked red flags") + "## Digest\n" + "".join(
+                f"## {n}. Flag {n}\n{'why it matters ' * 60}\n\n" for n in range(1, 140)))
     elif role == "ask":
         text, uses = do_ask(cwd, a["task"], add_dirs)
         if mode in ("slugcite", "slugfail") and "not source units" not in a["task"]:
@@ -432,7 +458,8 @@ def main():
     elif role == "dream_analyst":
         text = do_dream_analyst(add_dirs)
     elif role == "dream_apply":
-        text = do_dream_apply(cwd, add_dirs, mode == "lifecycle", reword=mode == "reword")
+        text = do_dream_apply(cwd, add_dirs, mode == "lifecycle", reword=mode == "reword",
+                              new_heading=mode == "newheading")
     elif role == "grade":
         text = do_grade(cwd)
     else:
@@ -450,7 +477,7 @@ def main():
     emit({"type": "assistant", "session_id": sid, "message": {"content": [
         {"type": "tool_use", "id": "t1", "name": u, "input": {"file_path": "_index.md"}} for u in uses]}})
     emit({"type": "result", "subtype": "success", "is_error": False, "session_id": sid, "num_turns": 4,
-          "result": text, "total_cost_usd": cost,
+          "result": text, "total_cost_usd": "n/a" if mode == "badcost" else cost,
           "usage": {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 1000,
                     "cache_creation_input_tokens": 200},
           "modelUsage": {a["model"]: {"inputTokens": 100, "outputTokens": 50, "cacheReadInputTokens": 1000,

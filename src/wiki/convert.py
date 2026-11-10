@@ -33,6 +33,8 @@ class TextExtractor(HTMLParser):
         self.skip_depth = 0
 
     def handle_starttag(self, tag, attrs):
+        if tag == "body":
+            self.skip_depth = 0  # a <head> that was never closed (valid HTML) must not swallow the page
         if tag in self.SKIP:
             self.skip_depth += 1
         elif tag in ("td", "th"):
@@ -142,10 +144,25 @@ def eml_to_text(path: Path) -> str:
     body = msg.get_body(preferencelist=("plain", "html"))
     content = ""
     if body is not None:
-        content = body.get_content()
+        try:
+            content = body.get_content()
+        except LookupError:  # a charset Python does not know
+            content = (body.get_payload(decode=True) or b"").decode("utf-8", errors="replace")
         if body.get_content_type() == "text/html":
             content = html_to_text(content)
     return hdr + "\n\n" + content
+
+
+def read_text(path: Path) -> str:
+    """A text file as UTF-8, or as UTF-16 when it starts with that byte-order mark (Excel's "Unicode Text", a
+    PowerShell redirect): read as UTF-8, such a file became its letters with a NUL between each."""
+    data = Path(path).read_bytes()
+    text = data.decode("utf-16" if data.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8", errors="replace")
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+READERS = {".eml": eml_to_text, ".docx": docx_to_text, ".xlsx": xlsx_to_text, ".pptx": pptx_to_text,
+           ".pdf": pdf_to_text}
 
 
 def convert(path: Path) -> str:
@@ -153,20 +170,17 @@ def convert(path: Path) -> str:
     path = Path(path)
     suffix = path.suffix.lower()
     if suffix in (".txt", ".md", ".csv"):
-        return path.read_text(encoding="utf-8", errors="replace")
+        return read_text(path)
     if suffix in (".html", ".htm"):
-        return html_to_text(path.read_text(encoding="utf-8", errors="replace"))
-    if suffix == ".eml":
-        return eml_to_text(path)
-    if suffix == ".docx":
-        return docx_to_text(path)
-    if suffix == ".xlsx":
-        return xlsx_to_text(path)
-    if suffix == ".pptx":
-        return pptx_to_text(path)
-    if suffix == ".pdf":
-        return pdf_to_text(path)
-    raise WikiError(f"{path.name}: unsupported type {suffix or '(none)'}; supported: {', '.join(sorted(SUPPORTED))}")
+        return html_to_text(read_text(path))
+    if suffix not in READERS:
+        raise WikiError(f"{path.name}: unsupported type {suffix or '(none)'}; supported: {', '.join(sorted(SUPPORTED))}")
+    try:
+        return READERS[suffix](path)
+    except WikiError:
+        raise
+    except Exception as why:  # a damaged file: the reader's own error, as a message instead of a traceback
+        raise WikiError(f"{path.name}: could not be read as {suffix}: {type(why).__name__}: {why}") from None
 
 
 def with_source_line(text: str, name: str, source_line: str | None = None, today: str | None = None) -> str:

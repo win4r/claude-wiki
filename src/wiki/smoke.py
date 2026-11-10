@@ -22,6 +22,8 @@ from .runner import Runner, RunSpec, init_problems
 from .workspace import private_dir, remove_tree
 
 ESTIMATE_USD = 0.35
+BUDGETS_USD = 0.70  # the five runs' budgets together: what a smoke could be charged if every run were charged in full
+CAP_USD = 1.00
 LONG_PROMPT_CHARS = 420_000  # about 120,000 tokens at 3.5 characters a token
 
 
@@ -39,17 +41,23 @@ def _tool_uses(stream: Path) -> list[dict]:
     return uses
 
 
+def _cap(max_usd: float | None) -> float:
+    return min(CAP_USD, max_usd) if max_usd else CAP_USD
+
+
 def smoke(ws, estimate_only: bool = False, model: str | None = None, approve_over_cap: bool = False,
-          include_long: bool = True) -> int:
+          include_long: bool = True, max_usd: float | None = None) -> int:
     cfg = ws.config()
     ledger = Ledger(ws.ledger_path)
     model = model or cfg.model("extract")
-    print(f"Estimate for wiki smoke: {cost_mod.usd(ESTIMATE_USD)} (cap $1.00)")
+    print(f"Estimate for wiki smoke: {cost_mod.usd(ESTIMATE_USD)} (cap {cost_mod.usd(_cap(max_usd))})")
     if estimate_only:
         return 0
     runner = Runner(ws, cfg, ledger)
     runner.check_ready()
-    cost_mod.authorize(ledger.spent(), cfg.total_usd, ESTIMATE_USD, 1.0, approve_over_cap, "wiki smoke")
+    cap = cost_mod.authorize(ledger.spent(), cfg.total_usd, ESTIMATE_USD, _cap(max_usd), approve_over_cap,
+                             "wiki smoke")
+    scale = min(1.0, cap / BUDGETS_USD)  # the budgets together stay within the cap and what is left of the total
     ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir = private_dir(ws.runs / f"smoke-{ts}")
     work = private_dir(run_dir / "work")
@@ -66,7 +74,7 @@ def smoke(ws, estimate_only: bool = False, model: str | None = None, approve_ove
 
     def spec(task_id, role, task, cwd, add_dirs=(), budget=0.10, turns=6, sp=prompt):
         return RunSpec(command="smoke", phase="smoke", role=role, task_id=task_id, run_dir=run_dir, cwd=cwd,
-                       task=task, system_prompt_file=sp, model=model, budget_usd=budget, turns=turns,
+                       task=task, system_prompt_file=sp, model=model, budget_usd=budget * scale, turns=turns,
                        timeout_s=180, add_dirs=list(add_dirs))
 
     # 1 and 3: reader, Grep in an added folder
@@ -130,11 +138,13 @@ def smoke(ws, estimate_only: bool = False, model: str | None = None, approve_ove
 
 
 PROBE_ESTIMATE_USD = 0.10
+PROBE_BUDGETS_USD = 0.11  # six probes at a cent and one real run
 READER = "Read,Glob,Grep"
 WRITER = "Read,Write,Edit,Glob,Grep"
 
 
-def probe_tools(ws, estimate_only: bool = False, model: str | None = None, approve_over_cap: bool = False) -> int:
+def probe_tools(ws, estimate_only: bool = False, model: str | None = None, approve_over_cap: bool = False,
+                max_usd: float | None = None) -> int:
     """Which tools Claude Code starts under each flag combination.
 
     Every probe but the last is stopped as soon as system/init arrives, before any model call. The last one is
@@ -143,13 +153,14 @@ def probe_tools(ws, estimate_only: bool = False, model: str | None = None, appro
     cfg = ws.config()
     ledger = Ledger(ws.ledger_path)
     model = model or cfg.model("extract")
-    print(f"Estimate for wiki smoke --probe-tools: {cost_mod.usd(PROBE_ESTIMATE_USD)} (cap $1.00)")
+    print(f"Estimate for wiki smoke --probe-tools: {cost_mod.usd(PROBE_ESTIMATE_USD)} (cap {cost_mod.usd(_cap(max_usd))})")
     if estimate_only:
         return 0
     runner = Runner(ws, cfg, ledger)
     runner.check_ready()
-    cost_mod.authorize(ledger.spent(), cfg.total_usd, PROBE_ESTIMATE_USD, 1.0, approve_over_cap,
-                       "wiki smoke --probe-tools")
+    cap = cost_mod.authorize(ledger.spent(), cfg.total_usd, PROBE_ESTIMATE_USD, _cap(max_usd), approve_over_cap,
+                             "wiki smoke --probe-tools")
+    scale = min(1.0, cap / PROBE_BUDGETS_USD)
     ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir = private_dir(ws.runs / f"probe-{ts}")
     work = private_dir(run_dir / "work")
@@ -172,7 +183,7 @@ def probe_tools(ws, estimate_only: bool = False, model: str | None = None, appro
     for name, opts in probes:
         r = runner.run(RunSpec(command="smoke", phase="probe", role="ask", task_id=name, run_dir=run_dir, cwd=inside,
                                task="Reply with the single word OK.", system_prompt_file=prompt, model=model,
-                               budget_usd=0.01, turns=1, timeout_s=60, stop_at_init=True, **opts))
+                               budget_usd=0.01 * scale, turns=1, timeout_s=60, stop_at_init=True, **opts))
         init = _init_event(r.stream_path)
         report["probes"][name] = {"tools": r.init_tools, "apiKeySource": (init or {}).get("apiKeySource"),
                                   "argv_flags": _flags(run_dir / f"{name}.cmd.json"), "outcome": r.outcome}
@@ -181,7 +192,7 @@ def probe_tools(ws, estimate_only: bool = False, model: str | None = None, appro
                            run_dir=run_dir, cwd=inside, bare=True, add_dirs=[added], system_prompt_file=prompt, model=model,
                            task=f"Use the Grep tool to search the folder {added} for the text "
                                 f"'{word.split('-')[0]}-'. Reply with the full marker you find and the file name.",
-                           budget_usd=0.05, turns=6, timeout_s=180, check_tools=False))
+                           budget_usd=0.05 * scale, turns=6, timeout_s=180, check_tools=False))
     uses = _tool_uses(r.stream_path)
     report["real_grep"] = {"outcome": r.outcome, "init_tools": r.init_tools, "tool_uses": [u["name"] for u in uses],
                            "found_marker": word in r.text, "answer": r.text[:300], "cost_usd": r.cost_usd}

@@ -11,7 +11,6 @@ import re
 import shutil
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,7 +27,7 @@ from .grammar import (
 from .ledger import Ledger
 from .manifest import Manifest, make_batches
 from .prompts import render, write_prompt
-from .runner import Runner, RunSpec
+from .runner import Runner, RunSpec, run_all
 from .workspace import make_read_only, private_dir, remove_tree, sha256_file
 
 PHASES = ["convert", "batch", "extract", "check", "resolve", "link", "compile", "index"]
@@ -38,6 +37,14 @@ UNIT_DIRS_CHECK = UNIT_DIRS_EXTRACT + ("addenda",)
 
 def now_id() -> str:
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+
+
+def new_id(taken: Callable[[str], bool]) -> str:
+    """A timestamp id that no run has yet (taken(id) says whether one has). A command started in the second another
+    took waits for the next: sharing the id, it would write into the other's folder, parts of it read-only."""
+    while taken(ts := now_id()):
+        time.sleep(0.1)
+    return ts
 
 
 def log(msg: str) -> None:
@@ -230,6 +237,8 @@ def execute(ctx: Context, task: WriterTask) -> TaskOutcome:
 
 
 def _attempt(ctx: Context, task: WriterTask, tid: str):
+    if ctx.runner.stopping:  # the command was interrupted or is stopping on an error: start nothing more
+        return 0.0, "run ended: interrupted", [], "", False
     budget = ctx.budget(task.task_id, 0.5)
     if ctx.cap is not None and ctx.spent_this_run() + budget > ctx.cap * 1.0001:
         return 0.0, f"the command's cap of {cost_mod.usd(ctx.cap)} would be passed", [], "", False
@@ -274,10 +283,14 @@ def retry_reason(problems: list[str], keep: int = 3, limit: int = RETRY_NOTE_CHA
     any second one of a kind, so a run rejected for two reasons hears both (the full list is in
     <task>.violations.txt). A list that fits is told whole. Otherwise a problem too long for the room left is
     passed over for the ones after it, and the count of problems left out is never cut off while it fits."""
+    def no_file(run: re.Match) -> str:  # what `\S+\.md` would leave of a run of non-spaces, in one pass over it
+        i = run.group(0).rfind(".md")
+        return run.group(0)[i + 3:] if i > 0 else run.group(0)
+
     def kind(p: str) -> str:  # the problem without its file, links, numbers and quoted text (a repr, escapes and all)
         p = re.sub(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"", "", p)
         p = re.sub(r"\[\[[^\]]*\]\]", "", p)
-        return re.sub(r"\d+", "", re.sub(r"\S+\.md", "", p))
+        return re.sub(r"\d+", "", re.sub(r"\S+", no_file, p))
 
     def note(told: list[str]) -> str:
         more = len(problems) - len(told)
@@ -378,15 +391,17 @@ def run_parallel(ctx: Context, tasks: list[WriterTask]) -> dict[str, TaskOutcome
 
     if not todo:
         return results
-    with ThreadPoolExecutor(max_workers=max(1, ctx.concurrency)) as pool:
-        for res in pool.map(one, todo):
-            results[res.task_id] = res
+    for res in run_all(ctx.runner, one, todo, ctx.concurrency):
+        results[res.task_id] = res
     return results
 
 
 # --- shared checks -----------------------------------------------------------------------------------
 
-def lint_changed(ctx_manifest: Manifest, wiki: Path, changed: list[str], rules=("frontmatter", "tag", "notes", "unit")):
+def lint_changed(ctx_manifest: Manifest, wiki: Path, changed: list[str],
+                 rules=("frontmatter", "tag", "notes", "unit", "size")):
+    """The errors wiki check would give for the files a run changed: caught here they are the run's to fix, in its
+    retry; left to the check that ends the build, they fail it after every later phase is paid for."""
     paths = {c[len("wiki/"):] for c in changed if c.startswith("wiki/")}
     findings = check_mod.run_checks(wiki, ctx_manifest)
     return [str(f) for f in findings if f.severity == "error" and f.rule in rules and f.path in paths]
@@ -550,11 +565,14 @@ def link_task(ctx: Context) -> WriterTask | None:
     old = {r.slug: set(r.proposed) for r in rows}
 
     def validate(wiki, changed):
-        problems = lint_changed(ctx.manifest(), wiki, changed, rules=("frontmatter",))
+        problems = lint_changed(ctx.manifest(), wiki, changed, rules=("frontmatter", "size"))
         text = (wiki / "_aliases.md").read_text() if (wiki / "_aliases.md").exists() else ""
         new_rows, parse_problems = parse_aliases(text)
         problems += parse_problems
         new = {r.slug: set(r.proposed) for r in new_rows}
+        slugs = [r.slug for r in new_rows]
+        problems += [f"slug {s!r} has more than one row; add its headings to the row it already has"
+                     for s in sorted({s for s in slugs if slugs.count(s) > 1})]
         for slug, proposed in old.items():
             if slug not in new:
                 problems.append(f"slug {slug!r} was removed or renamed")
@@ -597,8 +615,13 @@ def compile_tasks(ctx: Context, slugs: list[str], facts_sha: dict[str, str] | No
     if ctx.state is not None and groups:
         ctx.state["compile_groups"] = {**saved, **groups}
         ctx.save_state()
-    def validate(wiki, changed):
-        return lint_changed(ctx.manifest(), wiki, changed, rules=("tag",))
+    def validator(pages: set[str]) -> Callable[[Path, list[str]], list[str]]:
+        def validate(wiki, changed):
+            # a page left blank would count as done here and be paid for again by the next build
+            blank = [f"wiki/{page}: its current picture is empty; write at least one line"
+                     for page in sorted(pages) if (wiki / page).exists() and not picture_lines((wiki / page).read_text())]
+            return blank + lint_changed(ctx.manifest(), wiki, changed, rules=("tag",))
+        return validate
 
     def recorder(pages: set[str]) -> Callable[[], None]:
         def after_merge() -> None:
@@ -617,7 +640,7 @@ def compile_tasks(ctx: Context, slugs: list[str], facts_sha: dict[str, str] | No
         tasks.append(WriterTask(
             task_id=tid, phase="compile", role="compile", prompt="compile",
             task_text="Compile: write the Current picture of these pages: " + ", ".join(sorted(pages)) + ".",
-            marker_pages=pages, validate=validate, after_merge=recorder(pages),
+            marker_pages=pages, validate=validator(pages), after_merge=recorder(pages),
         ))
     return tasks
 
@@ -668,8 +691,13 @@ def index_task(ctx: Context) -> WriterTask:
     def validate(wiki, changed):
         m = ctx.manifest()
         findings = check_mod.run_checks(wiki, m)
-        return [str(f) for f in findings if f.severity == "error" and f.rule in ("index", "frontmatter", "tag")
-                and f.path in owned_files]
+        problems = [str(f) for f in findings if f.severity == "error" and f.rule in ("index", "frontmatter", "tag")
+                    and f.path in owned_files]
+        esc = wiki / "escalations.md"  # the program splits a long escalations.md at its `### ` entries, and only there
+        if esc.exists() and len(esc.read_bytes()) > check_mod.MAX_PAGE and "\n### " not in esc.read_text():
+            problems.append("escalations.md is over 100 KB and no entry starts with a `### ` heading, so the program "
+                            "cannot split it: start each full entry with `### <rank>. <title>`")
+        return problems
 
     return WriterTask(
         task_id="index", phase="index", role="index", prompt="index",
@@ -751,14 +779,31 @@ def build(ws, resume: bool = False, estimate_only: bool = False, max_usd: float 
         if unfinished and not estimate_only:
             raise WikiError(f"Build {unfinished.parent.name} did not finish: run wiki build --resume to finish it.")
         state = None
-        run_id = f"build-{now_id()}"
+        run_id = "build-" + new_id(lambda ts: (ws.runs / f"build-{ts}").exists())
     manifest = Manifest.load(ws.manifest_path)
     if state:
         units = state["units"]
         batches = state["batches"]
         shares, cap = state["shares"], state["cap"]
         model = model or state.get("model")
-        log(f"Resuming {run_id}: {len(units)} unit(s)")
+        if max_usd:
+            cap = min(cap, max_usd)  # --max-usd lowers this command's cap on a resume too
+        spent = sum(float(e.get("cost_usd") or 0) for e in ledger.entries() if e.get("run_id") == run_id)
+        left = sum(float(v) for k, v in shares.items() if state.get("tasks", {}).get(k, {}).get("status") != "done")
+        log(f"Resuming {run_id}: {len(units)} unit(s). Spent so far {cost_mod.usd(spent)} of its cap of "
+            f"{cost_mod.usd(cap)}; the unfinished tasks' budgets come to {cost_mod.usd(left)}.")
+        # A unit added again after its batch was extracted is new or changed once more. That batch is extracted
+        # and checked again, and the phases after it redone; the build used to file the unit with its old facts.
+        again = sorted(bid for bid, us in batches.items()
+                       if state.get("tasks", {}).get(f"extract-{bid}", {}).get("status") == "done"
+                       and any(manifest.units.get(u, {}).get("status") in ("new", "changed") for u in us))
+        if again and not estimate_only:
+            for bid in again:
+                for phase in ("extract", "check"):
+                    state["tasks"].pop(f"{phase}-{bid}", None)
+            state["phases_done"] = [p for p in state.get("phases_done", []) if p in ("convert", "batch")]
+        if again:
+            log(f"  Added again since the build started: batch(es) {', '.join(again)} are extracted and checked again.")
     else:
         units = manifest.pending_units()
         if not units:
@@ -781,7 +826,6 @@ def build(ws, resume: bool = False, estimate_only: bool = False, max_usd: float 
                  "estimate": est.total, "model": model, "phases_done": [], "tasks": {}, "finished": False,
                  "started": datetime.now(UTC).isoformat(timespec="seconds")}
     if estimate_only:
-        log(f"Resume of {run_id} would run the unfinished tasks within the remaining cap.")
         return 0
     ctx = Context(ws, "build", run_id, ws.repo, cfg=cfg, model_override=model, concurrency=concurrency,
                   shares=shares, cap=cap)

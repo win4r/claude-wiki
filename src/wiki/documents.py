@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -10,7 +12,8 @@ from pathlib import Path
 
 from . import WikiError, gitops, tool_root
 from .convert import SUPPORTED, convert, with_source_line
-from .manifest import Manifest
+from .manifest import Manifest, doc_slug
+from .workspace import sha256_bytes
 
 ANALYST_NOTE_SOURCE = "[SOURCE: synthetic demo document (marked) | analyst flash note | as-of: 2024-05-14]"
 CSV_SOURCE = "[SOURCE: synthetic demo document (marked) | vendor data extract | as-of: 2024-05-14]"
@@ -19,9 +22,9 @@ CSV_SOURCE = "[SOURCE: synthetic demo document (marked) | vendor data extract | 
 def expand(paths) -> list[Path]:
     out = []
     for p in map(Path, paths):
-        if p.is_dir():
+        if p.is_dir():  # nothing hidden: no dot-file, and no file under a dot-folder
             out += sorted(q for q in p.rglob("*") if q.is_file() and q.suffix.lower() in SUPPORTED
-                          and not q.name.startswith("."))
+                          and not any(part.startswith(".") for part in q.relative_to(p).parts))
         elif p.exists():
             out.append(p)
         else:
@@ -38,16 +41,46 @@ def add(ws, paths, source_lines: dict[str, str] | None = None, names: dict[str, 
     manifest = Manifest.load(ws.manifest_path)
     batch_chars = int(cfg.runner("batch_chars", 120_000))
     counts: dict[str, int] = {}
+    # Every refusal comes before anything is written: a file that cannot be converted, or two documents that make
+    # one slug, used to stop the command with the earlier documents already replaced in docs/ and the manifest not
+    # saved, so docs/ no longer matched it.
+    seen: dict[str, Path] = {}
+    for f in files:  # report.txt in two folders would be taken for two versions of one document
+        slug = doc_slug((names or {}).get(str(f), f.name))
+        if slug in seen and seen[slug].resolve() != f.resolve():
+            raise WikiError(f"{seen[slug]} and {f} both make the slug {slug!r}; rename one of them.")
+        seen[slug] = f
+    converted = []
     for f in files:
-        text = convert(f)
         name = (names or {}).get(str(f), f.name)
-        text = with_source_line(text, name, (source_lines or {}).get(str(f)))
-        for unit, status in manifest.add_document(name, text, ws.docs, batch_chars):
-            counts[status] = counts.get(status, 0) + 1
-            if status != "unchanged":
-                print(f"  {status:9} {unit}")
-    manifest.save(ws.manifest_path)
-    gitops.commit_all(ws.repo, f"wiki add: {len(files)} document(s)")
+        raw, line = convert(f), (source_lines or {}).get(str(f))
+        text = with_source_line(raw, name, line)
+        prev = manifest.documents.get(doc_slug(name))
+        if prev and prev.get("units") and prev["sha256"] != sha256_bytes(text.encode()):
+            # A document with no [SOURCE] line of its own was given "added: <that day>". Added again unchanged it
+            # keeps that day: with today's, its text would differ and the next build would pay to file it again.
+            stored = ws.docs / f"{prev['units'][0]}.txt"
+            day = None
+            if stored.exists():
+                with open(stored, encoding="utf-8", errors="replace") as handle:
+                    day = re.search(r"\| added: (\d{4}-\d{2}-\d{2})", handle.readline())
+            if day:
+                as_before = with_source_line(raw, name, line, today=day.group(1))
+                if sha256_bytes(as_before.encode()) == prev["sha256"]:
+                    text = as_before
+        converted.append((name, text))
+    trial = Manifest(copy.deepcopy(manifest.data))
+    for name, text in converted:
+        trial.add_document(name, text, ws.docs, batch_chars, write=False)
+    try:
+        for name, text in converted:
+            for unit, status in manifest.add_document(name, text, ws.docs, batch_chars):
+                counts[status] = counts.get(status, 0) + 1
+                if status != "unchanged":
+                    print(f"  {status:9} {unit}")
+    finally:  # whatever stopped it, the manifest records what docs/ now holds
+        manifest.save(ws.manifest_path)
+        gitops.commit_all(ws.repo, f"wiki add: {len(files)} document(s)")
     summary = ", ".join(f"{n} {s}" for s, n in sorted(counts.items()))
     print(f"Added {len(files)} document(s): {summary}. Run wiki build to file new or changed units.")
     return 0

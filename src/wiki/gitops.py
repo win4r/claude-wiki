@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import threading
 from pathlib import Path
@@ -139,6 +140,37 @@ def ls_files(repo: Path, ref: str, prefix: str = "") -> list[str]:
     if prefix:
         args += ["--", prefix]
     return [p for p in git(repo, *args).splitlines() if p]
+
+
+def tree_blobs(repo: Path, ref: str, prefix: str = "") -> dict[str, str]:
+    """path -> blob id of every file at a commit, under a folder."""
+    args = ["ls-tree", "-r", "-z", ref]
+    if prefix:
+        args += ["--", prefix]
+    out = {}
+    for entry in git(repo, *args).split("\0"):
+        meta, tab, path = entry.partition("\t")
+        if tab:
+            out[path] = meta.split()[2]
+    return out
+
+
+def blob_id(data: bytes, like: str) -> str:
+    """The id git gives a file with this content, in the hash `like` (another id of the repo) was made with."""
+    h = hashlib.new("sha256" if len(like) == 64 else "sha1")
+    h.update(b"blob %d\0" % len(data) + data)
+    return h.hexdigest()
+
+
+def unfinished_operation(repo: Path) -> str | None:
+    """What git was left in the middle of in this repo (a merge, say), or None. No commit can be made until it is
+    finished or aborted."""
+    gitdir = Path(git(repo, "rev-parse", "--absolute-git-dir").strip())
+    for name, what in (("MERGE_HEAD", "a merge"), ("CHERRY_PICK_HEAD", "a cherry-pick"), ("REVERT_HEAD", "a revert"),
+                       ("rebase-merge", "a rebase"), ("rebase-apply", "a rebase")):
+        if (gitdir / name).exists():
+            return what
+    return "unmerged files" if git(repo, "ls-files", "--unmerged").strip() else None
 
 
 def ref_exists(repo: Path, ref: str) -> bool:

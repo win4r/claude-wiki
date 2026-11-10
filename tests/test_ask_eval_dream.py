@@ -434,3 +434,221 @@ def test_commit_paths_takes_its_paths_literally_and_leaves_other_changes(tmp_pat
     with pytest.raises(WikiError):
         gitops.commit_paths(repo, ["r.md", "r.json"], "m")
     assert gitops.git(repo, "diff", "--cached", "--name-only").split() == ["keep.txt"]  # r.md is unstaged again
+
+
+def test_ctrl_c_in_an_eval_starts_no_grader_and_writes_no_report(built, tmp_path, monkeypatch):
+    """After Ctrl-C an eval used to start a grader for each answer that was cut short, and pay for it."""
+    from conftest import interrupted
+    from wiki.evaluate import run_eval
+
+    qfile = tmp_path / "q.toml"
+    qfile.write_text(QUESTIONS + QUESTIONS.replace('"q1"', '"q3"').replace('"q2"', '"q4"'))
+    before = len(Ledger(built.ledger_path).entries())
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "hang:ask")
+    started = lambda: [p for p in built.runs.glob("eval/*/*.jsonl") if p.stat().st_size]  # noqa: E731
+    why = interrupted(lambda: run_eval(built, qfile, modes=("wiki",), concurrency=2), lambda: len(started()) >= 2)
+    assert isinstance(why, KeyboardInterrupt)
+    new = Ledger(built.ledger_path).entries()[before:]
+    assert len(new) == 2 and all(e["phase"] == "ask-wiki" and e["outcome"] == "interrupted" for e in new)
+    assert not list(built.eval_dir.glob("report-*")) and gitops.is_clean(built.repo)
+
+
+def test_a_dream_that_was_cut_short_can_be_discarded(built, monkeypatch, capsys):
+    """A dream stopped by Ctrl-C used to stay "running": its branch and worktree were left, and --discard said no
+    dream was open."""
+    from wiki import dream as dream_mod
+
+    ask_n(built, 5)
+    real = dream_mod.run_all
+
+    def cut_short(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(dream_mod, "run_all", cut_short)
+    with pytest.raises(KeyboardInterrupt):
+        dream_mod.dream(built)
+    monkeypatch.setattr(dream_mod, "run_all", real)
+    d = load_dreams(built)[-1]
+    assert d["status"] == "failed-check" and "KeyboardInterrupt" in d["error"]
+    assert gitops.branches(built.repo, "dream/*") == [d["branch"]]
+    capsys.readouterr()
+    assert main(["-w", str(built.root), "dream"]) != 0 and "did not finish" in capsys.readouterr().err
+    assert main(["-w", str(built.root), "dream", "--accept"]) != 0 and "discarded" in capsys.readouterr().err
+    assert main(["-w", str(built.root), "dream", "--discard"]) == 0
+    assert not gitops.branches(built.repo, "dream/*") and not Path(d["worktree"]).exists()
+    # killed outright, a dream cannot even record that it stopped: its status stays "running"
+    assert main(["-w", str(built.root), "dream"]) == 0
+    dreams = load_dreams(built)
+    dreams[-1]["status"] = "running"
+    (built.runs / "dreams.json").write_text(json.dumps(dreams))
+    capsys.readouterr()
+    assert main(["-w", str(built.root), "status"]) == 0 and dreams[-1]["branch"] in capsys.readouterr().out
+    assert main(["-w", str(built.root), "dream"]) != 0 and "did not finish" in capsys.readouterr().err
+    assert main(["-w", str(built.root), "dream", "--accept"]) != 0
+    assert main(["-w", str(built.root), "dream", "--discard"]) == 0
+    assert not gitops.branches(built.repo, "dream/*") and gitops.is_clean(built.repo)
+    assert len(collect_transcripts(built)) == 5
+
+
+def test_a_dream_that_no_longer_merges_leaves_main_and_the_dream_as_they_were(built, corpus, capsys):
+    """--accept used to remove the dream's worktree, then leave repo/ in the middle of a merge, with conflict
+    markers in manifest.json, when main had moved on since the dream started."""
+    from wiki.documents import add
+
+    ask_n(built, 5)
+    assert main(["-w", str(built.root), "dream"]) == 0
+    d = load_dreams(built)[-1]
+    (corpus / "delta_note.md").write_text("# Late note\n\nENTITY: acme | company | Acme\n"
+                                          "FACT: acme | A late fact about Acme.\n"
+                                          "ENTITY: zeta | fund | Zeta\nFACT: zeta | Zeta appears late.\n")
+    add(built, [corpus])
+    assert build(built) == 0  # main moves on while the dream waits for review
+    head = gitops.head(built.repo)
+    capsys.readouterr()
+    assert main(["-w", str(built.root), "dream", "--accept"]) != 0
+    assert "does not merge into main" in capsys.readouterr().err
+    assert gitops.head(built.repo) == head and gitops.is_clean(built.repo)
+    assert gitops.unfinished_operation(built.repo) is None
+    Manifest.load(built.manifest_path)  # no conflict markers in it
+    assert Path(d["worktree"]).exists() and gitops.branches(built.repo, "dream/*") == [d["branch"]]
+    assert load_dreams(built)[-1]["status"] == "review" and not gitops.tags(built.repo, "dream-accepted-*")
+    assert main(["-w", str(built.root), "dream", "--discard"]) == 0
+    assert not gitops.branches(built.repo, "dream/*")
+    assert not errors(run_checks(built.wiki, Manifest.load(built.manifest_path), repo=built.repo))
+
+
+def test_eval_refuses_while_git_is_in_the_middle_of_a_merge(built, tmp_path, capsys):
+    """No commit can be made then, so every run used to be paid for and the report then not committed."""
+    qfile = tmp_path / "q.toml"
+    qfile.write_text(QUESTIONS)
+    git = lambda *args: gitops.git(built.repo, *args, check=False)  # noqa: E731
+    (built.eval_dir / "notes.txt").write_text("main\n")
+    gitops.commit_all(built.repo, "main's note")
+    git("checkout", "-q", "-b", "side", "HEAD~1")
+    (built.eval_dir / "notes.txt").write_text("side\n")
+    gitops.commit_all(built.repo, "side's note")
+    git("checkout", "-q", "main")
+    git("merge", "side")
+    assert gitops.unfinished_operation(built.repo) == "a merge"
+    before = len(Ledger(built.ledger_path).entries())
+    capsys.readouterr()
+    assert main(["-w", str(built.root), "eval", str(qfile), "--modes", "sources"]) != 0
+    assert "in the middle of a merge" in capsys.readouterr().err
+    assert len(Ledger(built.ledger_path).entries()) == before and not (built.runs / "eval").exists()
+    git("merge", "--abort")
+    assert gitops.unfinished_operation(built.repo) is None
+    assert main(["-w", str(built.root), "eval", str(qfile), "--modes", "sources"]) == 0
+
+
+def test_a_question_id_that_cannot_name_a_file_is_refused(tmp_path):
+    for bad in ("a/b", "../x", "q 1", ""):
+        f = tmp_path / "bad.toml"
+        f.write_text(QUESTIONS.replace('"q1"', json.dumps(bad)))
+        with pytest.raises(WikiError, match="may hold only"):
+            load_questions(f)
+    f.write_text(QUESTIONS.replace('"q1"', '"held-ga_accel.2"'))
+    assert load_questions(f)[0]["id"] == "held-ga_accel.2"
+
+
+def test_accept_merges_only_what_it_checked(built, capsys):
+    """accept checked the files in the dream's worktree and merged the branch tip, so a tip that failed the check
+    could be merged, and an edit that was not committed was checked, left out of the merge and deleted."""
+    ask_n(built, 5)
+    assert main(["-w", str(built.root), "dream"]) == 0
+    d = load_dreams(built)[-1]
+    wt = Path(d["worktree"])
+    notes = wt / "wiki" / "notes" / "beta-note.md"
+    original = notes.read_text()
+    line = next(ln for ln in original.splitlines() if ln.startswith("- ") and "[source:" in ln)
+    notes.write_text(original.replace(line + "\n", "", 1))
+    gitops.commit_all(wt, "a filed line deleted on the branch")
+    capsys.readouterr()
+    assert main(["-w", str(built.root), "dream", "--accept"]) != 0
+    assert "no longer passes" in capsys.readouterr().err
+    notes.write_text(original)  # back in the file, but the branch tip still lacks the line
+    assert main(["-w", str(built.root), "dream", "--accept"]) != 0
+    assert "not committed" in capsys.readouterr().err
+    assert not gitops.tags(built.repo, "dream-accepted-*") and gitops.branches(built.repo, "dream/*") == [d["branch"]]
+    assert line in (built.wiki / "notes" / "beta-note.md").read_text() and wt.exists()
+    gitops.commit_all(wt, "the line is back")
+    assert main(["-w", str(built.root), "dream", "--accept"]) == 0
+    assert line in (built.wiki / "notes" / "beta-note.md").read_text()
+    assert not errors(run_checks(built.wiki, Manifest.load(built.manifest_path), repo=built.repo, against=d["base"]))
+
+
+def test_a_dream_whose_analyst_failed_does_not_pass(built, monkeypatch, capsys):
+    """A failed analyst run was read as "no findings": the dream passed, and accepting it used up transcripts that
+    no analyst had read."""
+    ask_n(built, 5)
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "overcap:dream_analyst")
+    assert main(["-w", str(built.root), "dream"]) == 2
+    d = load_dreams(built)[-1]
+    assert d["status"] == "failed-check" and "analyst-01 (error_max_budget_usd)" in d["error"]
+    assert not any(e["phase"] == "dream-apply" for e in Ledger(built.ledger_path).entries())
+    assert main(["-w", str(built.root), "dream", "--accept"]) != 0
+    assert main(["-w", str(built.root), "dream", "--discard"]) == 0
+    assert len(collect_transcripts(built)) == 5
+
+
+def test_a_dream_stops_after_a_failed_link_run(built, monkeypatch, capsys):
+    """It went on to pay for Compile and Index, and only then failed its check."""
+    ask_n(built, 5)
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "newheading:dream_apply;overcap:link")
+    capsys.readouterr()
+    assert main(["-w", str(built.root), "dream"]) == 2
+    assert "estimate $1.75" in capsys.readouterr().out  # no dream in the ledger yet: the starting figure
+    d = load_dreams(built)[-1]
+    assert d["status"] == "failed-check" and d["error"].startswith("link failed")
+    ran = [e["task_id"] for e in Ledger(built.ledger_path).entries() if e["command"] == "dream"]
+    assert ran == ["analyst-01", "apply", "link"]
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "newheading:dream_apply")  # with Link working, the new heading gets a page
+    assert main(["-w", str(built.root), "dream", "--discard"]) == 0
+    capsys.readouterr()
+    assert main(["-w", str(built.root), "dream"]) == 0
+    assert "wiki/entities/newco.md" in load_dreams(built)[-1]["summary"]["files_changed"]
+    # the second dream's estimate and its runs' budgets follow what the first one's runs cost
+    out = capsys.readouterr().out
+    assert "estimate $1.75" not in out and "estimate $0." in out
+    caps = [e["run_cap_usd"] for e in Ledger(built.ledger_path).entries() if e["task_id"] == "analyst-01"]
+    assert len(caps) == 2 and caps[1] < caps[0] / 2  # no longer $0.75 of every $1.85 for one cheap analyst run
+
+
+def test_ids_in_a_malformed_tag_are_checked_too():
+    """Only an id after "source:" in lower case was compared with the manifest, so a second id in one tag, or one
+    with a capital or a space, was never reported."""
+    units, bad = cited_units("Price. [source: alpha-8k | as-of: 2024-05-13; acme | as-of: 2024-05-13]\n"
+                             "Cash. [source: Merger Agreement | as-of: 2024-05-13] and [source: Exhibit-2.1 | as-of: 2024-05-13]\n"
+                             "Fine. [source: beta-note | as-of: 2024-05-20]")
+    assert units == ["Exhibit-2.1", "Merger Agreement", "acme", "alpha-8k", "beta-note"] and len(bad) == 3
+    assert cited_units("Good. [source: alpha-8k | as-of: 2024-05-13]") == (["alpha-8k"], [])
+    assert cited_units("[source: a-1 | as-of: 2024-01-01; b-2]")[0] == ["a-1", "b-2"]
+
+
+def test_break_even_is_blank_without_a_sources_baseline_and_a_criteria_string_is_refused(tmp_path):
+    rec = {"id": "q1", "kind": "lookup", "mode": "wiki", "criteria": ["c"], "met": [True], "cost_usd": 0.01,
+           "refused": False, "unknown_units": [], "answer": "a", "question": "q"}
+    summary = score([rec, {**rec, "mode": "both"}], build_cost=1.0)  # no sources mode: nothing to compare with
+    table = report_markdown("q.toml", summary, [rec])
+    assert "| 0/0 | - |" in table and "never" not in table
+    summary = score([rec, {**rec, "mode": "sources", "cost_usd": 0.05}], build_cost=0.0)
+    assert summary["modes"]["wiki"]["break_even_answers"] == 0  # it used to print "never" for 0 answers
+    assert "| 0/0 | 0 |" in report_markdown("q.toml", summary, [rec])
+    summary = score([rec, {**rec, "mode": "sources", "cost_usd": 0.001}], build_cost=1.0)
+    assert "| 0/0 | never |" in report_markdown("q.toml", summary, [rec])
+    f = tmp_path / "q.toml"
+    f.write_text(QUESTIONS.replace('criteria = ["Gives the price with a source tag"]', 'criteria = "Gives $44.00"'))
+    with pytest.raises(WikiError, match="list of sentences"):  # each character was graded as a criterion, and paid for
+        load_questions(f)
+
+
+def test_a_dream_splits_a_long_escalations_page_as_a_build_does(built, monkeypatch):
+    """A dream reran Index and never split escalations.md, so on a wiki whose page needs splitting (the core wiki's
+    does) no dream could pass its check."""
+    from wiki import dream as dream_mod
+
+    ask_n(built, 5)
+    split, real = [], dream_mod.split_escalations
+    monkeypatch.setattr(dream_mod, "split_escalations", lambda wiki: split.append(wiki) or real(wiki))
+    assert main(["-w", str(built.root), "dream"]) == 0
+    d = load_dreams(built)[-1]
+    assert split == [Path(d["worktree"]) / "wiki"]

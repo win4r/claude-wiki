@@ -21,6 +21,7 @@ TAG_RE = re.compile(
 TAG_START = re.compile(r"\[source:", re.I)
 TAG_AT_END = re.compile(r"(" + TAG_RE.pattern + r")\s*$")
 LIFECYCLE = re.compile(r" \| (?:valid_to|retracted): " + DATE)
+ANY_TAG = re.compile(r"\[source:[^\]\n]*\]")
 WIKILINK = re.compile(r"\[\[([^\[\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]")
 CODE_SPAN = re.compile(r"`[^`\n]*`")
 MARK_START = "<!-- current-picture:start -->"
@@ -69,7 +70,11 @@ def fact_tag(line: str) -> dict | None:
 
 def strip_lifecycle(line: str) -> str:
     """A fact line with valid_to and retracted removed from its tags, for --against comparisons."""
-    return LIFECYCLE.sub("", line.rstrip())
+    line = line.rstrip()
+    if " | valid_to: " not in line and " | retracted: " not in line:
+        return line
+    # inside its tags only: the same words added to the line's text are a rewording, not a lifecycle mark
+    return ANY_TAG.sub(lambda m: LIFECYCLE.sub("", m.group(0)), line)
 
 
 def lifecycle_only_added(base: str, current: str) -> bool:
