@@ -3,7 +3,7 @@
 It reads its task, writes canned files into its working directory, and emits stream-json with a made-up cost.
 It can misbehave on purpose: WIKI_FAKE_MISBEHAVE="<mode>[:<role>[:<times>]]" with mode one of
 outside, markers, input, fail, noresult, overcap, maxturns, badtools, extras, hang, lifecycle, slugcite,
-slugfail (slugcite, and the citation retry ends over its cap), reword (Check rewrites a filed notes line; Resolve and
+slugfail (slugcite, and the citation retry ends over its cap), filecite (an answer's tag names the unit's file), reword (Check rewrites a filed notes line; Resolve and
 Dream apply rewrite a filed addenda line), plainpic (Compile writes a plain line in a picture), blankpic (Compile
 leaves its pictures empty), noinit (no system/init event), strplugin (init lists a plugin by name only), badcost (the
 result's cost is not a number), newheading (Dream apply files a fact under a heading no row maps), dupslug (Link gives a slug a second row), bigesc
@@ -452,6 +452,8 @@ def main():
                 f"## {n}. Flag {n}\n{'why it matters ' * 60}\n\n" for n in range(1, 140)))
     elif role == "ask":
         text, uses = do_ask(cwd, a["task"], add_dirs)
+        if mode == "filecite":  # the right unit, named by its file and with the bar escaped as in a table
+            text = re.sub(r"\[source: ([^ |\]]+) \|", r"[source: metrics/\1.md \\|", text)
         if mode in ("slugcite", "slugfail") and "not source units" not in a["task"]:
             slug = next((p.stem for p in sorted((cwd / "entities").glob("*.md"))), "acme")
             text = re.sub(r"\[source: [^ |\]]+", f"[source: {slug}", text) + " [source: _schema.md | as-of: n/a]"

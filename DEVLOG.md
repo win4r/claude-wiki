@@ -718,6 +718,155 @@ Proposals:
 
 Cost: $0.00. Total spent so far: $17.15 of $50 by the ledgers; at most $17.26 in all.
 
+## After M5: benchmark runs and what they changed in `wiki ask` (2026-11-10)
+
+The owner asked me to run the benchmarks, fix what scores poorly, rerun, and repeat until the gains level off,
+with paid runs allowed without asking while this task's spend stays under $50. I kept to the tighter limit that
+was already in place: the core workspace's `caps.total_usd` of $48.46, which only the owner raises. Every paid
+run went through `wiki eval`. The task spent **$11.75** (2,067 runs, all `success`).
+
+Result: three runs of each set before, and two measurements of three runs each after, all modes (criteria
+met; median cost per answer). The second measurement followed the last two program fixes of point 5 below,
+which cannot move a score by much, so the two are best read as repeats of one measurement.
+
+| set | mode | before | after, 1st | after, 2nd |
+| --- | --- | --- | --- | --- |
+| core-tier (10 questions, 41 criteria) | wiki | 93/123 = 75.6%, $0.0026 | 107/123 = 87.0%, $0.0032 | 114/123 = 92.7%, $0.0030 |
+| | both | 108/123 = 87.8%, $0.0038 | 112/123 = 91.1%, $0.0034 | 109/123 = 88.6%, $0.0035 |
+| | sources (prompt unchanged) | 106/123 = 86.2%, $0.0025 | 106/123 = 86.2%, $0.0027 | 107/123 = 87.0%, $0.0024 |
+| quickstart-tier (8 questions, 30 criteria) | wiki | 76/90 = 84.4%, $0.0015 | 84/90 = 93.3%, $0.0018 | 83/90 = 92.2%, $0.0019 |
+| | both | 81/90 = 90.0%, $0.0022 | 84/90 = 93.3%, $0.0020 | 82/90 = 91.1%, $0.0021 |
+| | sources (prompt unchanged) | 77/90 = 85.6%, $0.0014 | 82/90 = 91.1%, $0.0015 | 82/90 = 91.1%, $0.0015 |
+| second set (12 questions, 49 criteria) | wiki | 133/147 = 90.5%, $0.0027 | 140/147 = 95.2%, $0.0032 | 138/147 = 93.9%, $0.0037 |
+| | both | 140/147 = 95.2%, $0.0036 | 139/147 = 94.6%, $0.0038 | 140/147 = 95.2%, $0.0039 |
+| | sources (prompt unchanged) | not run | 137/147 = 93.2%, $0.0029 | 132/147 = 89.8%, $0.0028 |
+
+How to read it:
+- **Wiki mode is better, by more than the noise.** Over the three sets it went from 302/360 (83.9%) to 331/360
+  (91.9%) and 335/360 (93.1%): about 8 to 9 points.
+- **On core-tier alone the gain is about 10 points, not 17.** The noise there is large: the unchanged wiki
+  prompt scored 82.9% on 11-09 and 75.6% today, and the two measurements after the changes gave 87.0% and 92.7%.
+  Pooled, that is 195/246 (79.3%) before and 221/246 (89.8%) after. The unchanged sources prompt moved 5.5
+  points on quickstart-tier between today's measurements.
+- **Wiki mode now costs more than sources mode.** Its median answer cost rose by $0.0003 to $0.0010 and is 10% to
+  32% above sources mode in the same runs (25% to 32% in the second measurement), where M5 recorded a tie. The
+  extra tokens are the map and the page reads that the points came from (on core-tier, cache writes per answer
+  rose from 11,200 to 14,200 tokens; the mean cost rose 9%, from $0.0030 to $0.0033). The trade is the owner's
+  to judge; I did not spend iterations on cost.
+- **Both mode is unchanged in accuracy** (329/360 before; 335/360 and 331/360 after), in fewer turns (core 8.5
+  to 6, quickstart 7 to 5) and at about the same cost.
+- **In both measurements after the changes every trap was refused in every mode, and no answer cited an id
+  outside the manifest.**
+- Reports, in each workspace's `repo/eval/`, all dated 20261110:
+  - core-tier: before T150735Z, T151142Z, T151607Z; after T162603Z, T162958Z, T163414Z and T165825Z, T170223Z,
+    T170724Z.
+  - quickstart-tier: before T150735Z, T150929Z, T151143Z; after T162603Z, T162849Z, T163138Z and T165825Z,
+    T170115Z, T170315Z.
+  - second set (`report-heldout-tier-*`): before T154733Z, T155207Z, T155418Z, run through the same CLI from a
+    checkout of eaaac79, wiki and both modes only; after T163810Z, T164041Z, T164440Z and T171053Z, T171342Z,
+    T171734Z.
+  - The runs in between (one mode each, and a run of the second set before the first measurement) are there
+    too.
+
+What scored poorly, and why:
+- Wiki mode lost its points on facts the wiki holds. The saved runs show where each search went wrong:
+  - **A fact filed under another name.** The fee and "no fairness opinion" lines for J.P. Morgan are filed as
+    "JPM". `_aliases.md` maps the two, and the run never read it.
+  - **A later document not searched.** Answers gave the $44.00 price as final, or called the closing 8-K's
+    $46.50 an unexplained conflict: nothing told the run which units were the amendment and the closing.
+  - **A search cut off at its limit.** A name such as "Parent" matches hundreds of long lines, and 30 of them
+    rarely held the line needed (the lenders, the $2.1B term loan at closing).
+  - The entity pages answer several of these in their Current picture, and the M5 prompt read a page only when a
+    search found nothing.
+- The trap's first criterion failed in wiki mode in 2 of 3 runs: the answer began "Not in the wiki" and then
+  quoted the 2025 projection of $1,374M.
+
+Changes, in the order tried (wiki mode on core-tier, three runs each: 75.6% → 87.0% → 90.2% → 91.1%, then the
+two measurements above at 87.0% and 92.7%):
+1. **The program hands the run a map of the wiki** (`ask.wiki_map`), in wiki and both modes, after the question:
+   - the index's "Where to start" section;
+   - for each entity the question names, its page and the other names `_aliases.md` gives it (the longest name
+     wins where two overlap, a two-letter acronym matches only as written, a row with no page is left out);
+   - the units with their index descriptions, oldest first by the date in each document's [SOURCE] line. A
+     document with no such date is listed last, and the list then says so (added after the measurements; every
+     unit of both example wikis is dated, so their tasks are the same text as measured).
+   The wiki prompt reads the Current picture of one to three pages, then searches the fact folders under every
+   name. 75.6% → 87.0%.
+2. **Search the latest units for anything that can change**, and every Grep names `output_mode "content"` (runs
+   had been spending turns on file lists). 90.2%.
+3. **Figures from `metrics/` first; each part of the answer led by where things stand at the latest date; the
+   amount where the question asks what someone owns, owes, pays or commits; no projection quoted in place of a
+   reported figure the wiki lacks.** 91.1%. The +0.9 is inside the noise, so I stopped changing the wiki prompt.
+4. **The both prompt follows the same plan**, with the documents kept for gaps and for confirming a figure. Its
+   old plan sent runs to `<slug>.md` at the wiki root, where no page is (3 failed reads and a Glob in one traced
+   run).
+5. Program fixes that the runs exposed:
+   - **A tag that names a unit's file is repaired, not asked again.** `[source: metrics/8k-closing.md | …]` can
+     only mean the unit `8k-closing`. In the first measurement 24 of 270 answers were asked again, 15 of them
+     for this alone, and each retry is a second paid run. In the second, 12 were (all cite an entity page's
+     slug; 11 are in both mode), and 7 tags were repaired.
+   - **A tag inside a Markdown table**, with its bar escaped (`\|`), was read as an id outside the manifest.
+   - **A grade with a comma before the closing bracket was lost** (`[true, true, false, ]`): the answer counted
+     as ungraded, 0 of 3. One answer in the baseline and one in the first measurement were lost this way; the
+     committed reports stay as they were run.
+
+The second question set (`examples/sec-deal/heldout-tier.toml`, evidence beside it):
+- A subagent wrote it from the 29 documents alone, without the wiki or any eval result, on topics the core set
+  does not ask about. I checked 13 of its figures against the documents.
+- The code before this entry already scored 90.5% (wiki) and 95.2% (both) on it, so it had little room to show
+  a gain. What it shows is no sign that the changes fit the core questions only: wiki mode moved from 90.5% to
+  95.2% and 93.9%, which is inside the noise, and both mode stayed at 94.6% to 95.2%.
+- It found the table-tag and file-path bugs above, which the core set never triggered.
+- I have read its per-criterion results, so it is no longer held out. Its header says so.
+
+What the owner should know before relying on these numbers:
+- The "held" questions of core-tier have been tuned on since M5. No prompt change was made for a
+  quickstart-tier question, but the set is not untouched: I read its baseline results, and the last two program
+  fixes came partly from its first measurement (the lost grade was a quickstart answer, and so were 7 of the 24
+  retries).
+- **Reading order.** The search-first order the owner approved in M5 (commits 3e79506, 11bc27e) is replaced:
+  wiki mode again starts from the index's map and the entity pages, as SPEC describes, but the program supplies
+  the map instead of the run reading `_index.md`. SPEC.md is unchanged and does not describe `wiki_map`.
+- **The projection rule is a judgment call.** A run now says a projection exists without quoting its amount
+  when the question asks for a reported figure. It follows the trap's criterion ("gives no FY2025 revenue
+  figure"), and only that question tests it. An owner who wants the labelled projection quoted can delete one
+  sentence from each ask prompt.
+- "A later document overrides an earlier one" could mislead where a later document is weaker (the analyst note
+  and the vendor extract are dated after filings). I found no case of it:
+  - demo-ebitda scored 35/36 in wiki mode and 34/36 in both mode over three measurements (36/36 before). The
+    three answers that lost a point all quote the $252M estimate as an unverified analyst figure; they lose the
+    point for not tying it to the Credit Agreement definition, which the wiki says the note does not name.
+  - qs-vendor-rows scored 29/30 in wiki mode over two measurements. In both mode it fell from 14/15 to 10/15,
+    twice: the traced answers are short and leave points out, and none treats vendor data as overriding a
+    filing.
+
+Not fixed, and proposals:
+- **held-ga-accel stays at about half** (8/15 wiki, 6/15 both, 7/15 sources in the second measurement). Its second criterion wants the
+  Exhibit A total of 14,514,196 with the 2.6% that belongs to a different count (14,563,386); it was met in 3 of
+  the 18 answers of the two final measurements. I did not tune for it.
+- **An entity page's picture cannot see facts filed under another heading.** `squarespace-merger` has no line
+  from the amendment or the closing 8-K, whose extractors filed the new price under `a-r-merger-agreement` and
+  `squarespace`. Its picture still leads with $44.00. Wiki-mode asks now get past this through the unit list;
+  a reader of the page does not. Proposal: let Compile see, per page, the later units that name the entity.
+  Compile for all 296 pages cost $0.80 in the M5 build.
+- **A citation retry can replace a complete answer with a worse one.** It starts a new session. In one both-mode
+  run of ho-termination-fees the first answer cited `squarespace-merger-agreement` once, and the second answer
+  lost three criteria. Proposal: grade or keep the first answer when the retry's answer is shorter, or ask only
+  for the tags to be corrected.
+- Both mode still cites an entity slug in about 1 answer in 8, though the prompt and the map forbid it.
+- Output tokens are about 35% of an answer's cost, and much of that is thinking, not the answer (1,892 of 4,432
+  tokens in one sampled run). The runner sets no effort level.
+- `both` is still the default mode. Over the two measurements it scored 666/720, the same as wiki mode, at a
+  higher cost.
+
+Tests: 202 (200 passed, 2 live tests skipped), up from 196: the map (start section, names, shared and
+overlapping names, acronyms, unit order and dates, an empty wiki), the task of each mode, the tag repair end to
+end with no second run, escaped bars, a trailing comma in a grade, and the prompt rules the map relies on.
+
+Cost: $11.75 (27 evals of 3 modes, 12 of 1 mode, 3 of 2 modes; of it, $6.17 for the two measurements after the
+changes). Total spent so far: $28.91 of $50 by the ledgers;
+at most $29.02 with the incident of 2026-11-09.
+
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
 M2, M3 and M4 each end in paid runs, and M0's live checks come first, so these milestones are not done. Their

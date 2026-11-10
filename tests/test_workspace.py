@@ -185,9 +185,15 @@ def test_init_with_mcp_servers_or_user_plugins_fails(ws, monkeypatch):
 
 
 def test_ask_prompts_require_unit_ids_and_index_keeps_readme_points():
-    assert "never\nan entity page slug" in render("ask_both")
-    wiki = render("ask_wiki")
-    assert "never an entity page slug" in wiki and "`_schema.md`" in wiki and "head_limit 30" in wiki and "{notes,metrics,relations,addenda,contracts}/*.md" in wiki
+    for prompt in ("ask_wiki", "ask_both"):
+        text = " ".join(render(prompt).split())
+        assert "never an entity page slug" in text and "`_schema.md`" in text and "head_limit 30" in text
+        assert "{notes,metrics,relations,addenda,contracts}/*.md" in text and 'output_mode "content"' in text
+        # the plan the task's wiki map supports: pictures, then every name, metrics for figures, the latest units
+        for part in ('"Where to start"', '"Names in the question"', '"Units"', "search metrics/*.md first",
+                     "search the latest units", "A later document overrides an earlier one",
+                     "do not quote that amount in its place"):
+            assert part in text, (prompt, part)
     idx = render("index", escalations=True)
     assert "_aliases.md` maps" in idx and '"computed"' in idx and "edit it in place" in idx
     assert "## Sources` table" in idx

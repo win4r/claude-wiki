@@ -6,11 +6,12 @@ from pathlib import Path
 import pytest
 
 from wiki import WikiError, gitops, tool_root
-from wiki.ask import cited_units, refused
+from wiki.ask import cited_units, names_in, refused, repair_tags, start_map, unit_list, wiki_map
 from wiki.check import errors, run_checks
 from wiki.cli import main
 from wiki.dream import collect_transcripts, load_dreams, transcript_markdown
 from wiki.evaluate import load_questions, parse_grade, report_markdown, score
+from wiki.grammar import AliasRow, render_aliases
 from wiki.ledger import Ledger
 from wiki.manifest import Manifest
 from wiki.phases import build
@@ -42,6 +43,86 @@ def test_answer_helpers():
     assert not refused("The price was $44.00 [source: a | as-of: 2024-01-01]")
     units, bad = cited_units("x [source: a-1 | as-of: 2024-01-01] y [source: b | as of 2024]")
     assert "a-1" in units and bad
+    # in a Markdown table an answer escapes the bars of its tags: the same tag, not a malformed one
+    assert cited_units("| Pay | $1 [source: def14a-part1 \\| as-of: 2024-04-22] |") == (["def14a-part1"], [])
+
+
+def _map_wiki(tmp_path) -> tuple[Path, Path]:
+    wiki, docs = tmp_path / "wiki", tmp_path / "docs"
+    (wiki / "entities").mkdir(parents=True)
+    (wiki / "notes").mkdir()
+    docs.mkdir()
+    rows = [
+        AliasRow("jp-morgan", "advisor", ["J.P. Morgan Securities LLC", "J.P. Morgan", "JPM"], ["jpm"], "an adviser", 1),
+        AliasRow("merger-agreement", "contract", ["Merger Agreement", "Agreement"], ["merger-agreement"], "the deal", 2),
+        AliasRow("support-agreement", "contract", ["Support Agreement"], ["support-agreement"], "a side deal", 3),
+        AliasRow("general-atlantic", "fund", ["General Atlantic", "GA"], ["ga"], "an investor", 4),
+        AliasRow("no-page", "other", ["Orphan Corp"], ["orphan"], "mapped, but with no page", 5),
+    ]
+    (wiki / "_aliases.md").write_text(render_aliases(rows))
+    for r in rows[:4]:
+        (wiki / "entities" / f"{r.slug}.md").write_text(f"# {r.slug}\n")
+    (wiki / "_index.md").write_text(
+        "---\nname: _index\ndescription: map\n---\n## Where to start\nRead this first.\n"
+        "- Deal: [[merger-agreement]] (terms).\n- Advisers: [[jp-morgan]].\n\n## Entities\n- [[jp-morgan]] — an adviser\n\n"
+        "## Units\nEach unit is one document.\n"
+        "- `closing-8k` — the closing. Files: notes/closing-8k.md, metrics/closing-8k.md\n"
+        "- memo — an undated memo. Files: notes/memo.md\n"
+        "- `proxy-part1` — the proxy, part 1. Files: notes/proxy-part1.md\n"
+        "- not a unit — no notes file has this name\n")
+    for unit, head in (("closing-8k", "[SOURCE: SEC EDGAR | form: 8-K | filed: 2024-10-17]"),
+                       ("proxy-part1", "[SOURCE: SEC EDGAR | form: DEFM14A | filed: 2024-08-22]"),
+                       ("memo", "[SOURCE: memo.docx | added: 2026-11-08]")):
+        (wiki / "notes" / f"{unit}.md").write_text(f"# Facts from {unit}\n")
+        (docs / f"{unit}.txt").write_text(head + "\n\ntext\n")
+    return wiki, docs
+
+
+def test_wiki_map_start_names_and_units(tmp_path):
+    """The map an ask run starts from: the index's first section, the page and other names of each entity the
+    question names, and the units by document date."""
+    wiki, docs = _map_wiki(tmp_path)
+    index = (wiki / "_index.md").read_text()
+    assert start_map(index) == ["- Deal: [[merger-agreement]] (terms).", "- Advisers: [[jp-morgan]]."]
+    # oldest first, each led by its document's date and cut before its files; an "added" day is no document date
+    assert unit_list(index, docs, wiki) == [
+        "- 2024-08-22 `proxy-part1` — the proxy, part 1.", "- 2024-10-17 `closing-8k` — the closing.",
+        "- `memo` — an undated memo."]
+    text = wiki_map(wiki, "What does J.P. Morgan get under the Support Agreement, and what does GA or Orphan Corp get?", docs)
+    assert text.startswith("\n\nWiki map (")
+    assert '- "J.P. Morgan": entities/jp-morgan.md; also written "J.P. Morgan Securities LLC", "JPM"' in text
+    assert '- "Support Agreement": entities/support-agreement.md' in text
+    assert "merger-agreement.md" not in text.split("Names in the question", 1)[1].split("Units (", 1)[0]  # "Agreement" is inside a longer name
+    assert '- "GA": entities/general-atlantic.md; also written "General Atlantic"' in text
+    assert "no-page" not in text and "Orphan" not in text  # a row with no page is not offered
+    assert text.index("Where to start") < text.index("Names in the question") < text.index("Units (")
+    assert "oldest first; those whose document gives no date come last, in no order of time;" in text  # the memo
+    (docs / "memo.txt").write_text("[SOURCE: memo.docx | as-of: 2024-01-05]\n\ntext\n")
+    dated = wiki_map(wiki, "Anything?", docs)
+    assert "Units (source documents, oldest first; unit <u>'s" in dated and "- 2024-01-05 `memo`" in dated
+    rows = [AliasRow("general-atlantic", "fund", ["General Atlantic", "GA"], [], "", 1),
+            AliasRow("us-co", "company", ["us", "Our Co"], [], "", 2)]
+    assert names_in("How big was the gap in a gala for us?", rows) == []  # a short acronym matches as written only
+    assert [w for w, _ in names_in("What does general atlantic own?", rows)] == ["general atlantic"]
+
+
+def test_wiki_map_is_empty_without_an_index_or_names(tmp_path):
+    (tmp_path / "wiki").mkdir()
+    assert wiki_map(tmp_path / "wiki", "Anything?", tmp_path / "docs") == ""
+
+
+@pytest.mark.parametrize("mode", ["wiki", "sources", "both"])
+def test_ask_task_carries_the_wiki_map(built, mode):
+    """Wiki and both modes hand the reader the map; sources mode, which may not see the wiki, gets none."""
+    assert main(["-w", str(built.root), "ask", "What price per share did Acme agree to?", "--mode", mode]) == 0
+    argv = json.loads(sorted((built.runs / "ask").glob(f"*-{mode}.cmd.json"))[-1].read_text())["argv"]
+    task = argv[argv.index("-p") + 1]
+    assert task.startswith("Ask: What price per share did Acme agree to?")
+    if mode == "sources":
+        assert "Wiki map" not in task
+    else:
+        assert "Where to start" in task and '- "Acme": entities/acme.md' in task
+        assert "- 2024-05-13 `alpha-8k`" in task  # the unit with its document's date
 
 
 @pytest.mark.parametrize("mode", ["wiki", "sources", "both"])
@@ -77,6 +158,28 @@ def test_ask_retries_once_when_citing_non_units(built, capsys, monkeypatch):
     assert rec["first_stream"] != rec["stream"]
 
 
+def test_a_tag_naming_a_units_file_is_repaired_without_a_second_run(built, capsys, monkeypatch):
+    """`[source: metrics/<unit>.md | ...]` can only mean that unit: the tag is rewritten, and no retry is paid for."""
+    units = {"8k-closing", "proxy-part1"}
+    text, n = repair_tags("a [source: metrics/8k-closing.md | as-of: 2024-10-17] b [source: proxy-part1.txt \\| as-of: "
+                          "2024-08-22] c [source: notes/8k-closing | as-of: 2024-10-17] d [source: 8k-closing | as-of: "
+                          "2024-10-17] e [source: entities/acme.md | as-of: 2024-01-01] f [source: metrics/other.md | x]", units)
+    assert n == 3 and text.count("[source: 8k-closing |") == 3 and "[source: proxy-part1 \\|" in text
+    assert "[source: entities/acme.md |" in text and "[source: metrics/other.md |" in text  # not units: left for the check
+    assert repair_tags("no tags", units) == ("no tags", 0) and repair_tags(None, units) == ("", 0)
+    # a tag with no date is still malformed, but it names its unit
+    loose, n = repair_tags("x [source: metrics/8k-closing.md] y [source: notes/proxy-part1.md, computed, as-of 2024]", units)
+    assert n == 2 and cited_units(loose)[0] == ["8k-closing", "proxy-part1"] and len(cited_units(loose)[1]) == 2
+    monkeypatch.setenv("WIKI_FAKE_MISBEHAVE", "filecite:ask")
+    assert main(["-w", str(built.root), "ask", "What price per share did Acme agree to?", "--mode", "wiki"]) == 0
+    assert "all in the manifest" in capsys.readouterr().out
+    rec = json.loads(sorted((built.runs / "ask").glob("*-wiki.json"))[-1].read_text())
+    assert rec["repaired_tags"] == 1 and not rec["citation_retry"] and not rec["unknown_units"]
+    assert "metrics/" not in rec["answer"] and rec["cited_units"]
+    assert not list((built.runs / "ask").glob("*-cite.cmd.json"))  # one run only
+    assert len([e for e in Ledger(built.ledger_path).entries() if e["command"] == "ask"]) == 1
+
+
 def test_ask_trap_is_refused(built, capsys):
     assert main(["-w", str(built.root), "ask", "What was revenue in fiscal 2025?", "--mode", "wiki"]) == 0
     assert "Not in the wiki" in capsys.readouterr().out
@@ -107,6 +210,7 @@ def test_question_files(tmp_path):
 def test_grade_parsing_and_scoring():
     assert parse_grade('{"met": [true, false]}', 2) == [True, False]
     assert parse_grade('noise {"met": [true]} tail', 1) == [True]
+    assert parse_grade('{"met": [true, true, false, ], "notes": ["a", "b", "c",]}', 3) == [True, True, False]  # trailing commas
     assert parse_grade('{"met": [true]}', 2) is None and parse_grade("nope", 1) is None
     # a grader that corrects itself: the last valid object wins
     corrected = ('{"met": [true, false], "notes": ["a", "b"]}\n\nCorrection: the second entry is wrong.\n\n'

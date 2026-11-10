@@ -1,0 +1,138 @@
+# Second question set for the sec-deal core documents (workspaces/sec-deal-core/docs): 12 questions, 49 criteria.
+# Written on 2026-11-10 from the 29 documents alone, by a writer who saw neither the wiki nor any eval result, to
+# check that changes tuned on core-tier.toml carry over. heldout-evidence.md gives file, line and quote for every
+# criterion. Its per-criterion results have been read since (DEVLOG, 2026-11-10), so it is no longer held out:
+# write a new set before tuning against it. One point per criterion met.
+
+[[question]]
+id = "ho-google-domains"
+kind = "lookup"
+question = "What did Squarespace pay for Google's domain registration business, when was the deal signed and when did it close, how was it funded, and how much of the price was booked as an intangible asset and over what period is that asset amortized?"
+criteria = [
+  "Says the asset purchase agreement was signed on June 15, 2023 and the deal closed on September 7, 2023",
+  "Gives the total amount paid as $180.7M ($180,721 thousand)",
+  "Says it was funded with cash on hand plus $100M of additional term loan borrowings",
+  "Says $176.7M was allocated to customer relationships, amortized over 4 years",
+]
+
+[[question]]
+id = "ho-centerview-valuation"
+kind = "lookup"
+question = "What per-share value ranges did Centerview's comparable-company and discounted cash flow analyses produce in support of its fairness opinion on the original $44.00 price, what discount rates did the DCF use, and what range of analyst price targets did Centerview note?"
+criteria = [
+  "Comparable public companies analysis: implied value of about $38.10 to $45.10 per share",
+  "Discounted cash flow analysis: implied value of about $41.65 to $53.10 per share",
+  "Says the DCF used discount rates of 12.5% to 14.5%",
+  "Says the analyst price targets ranged from $38.00 to $50.00 per share",
+]
+
+[[question]]
+id = "ho-sale-process"
+kind = "lookup"
+question = "How was the special committee set up, and how broad was its market check before the merger agreement was signed? Say when the board formed it, who its members and chair were, which legal and financial advisers it hired, and how many potential buyers were contacted, signed confidentiality agreements and had diligence sessions with management."
+criteria = [
+  "Says the board formed the special committee on February 22, 2024",
+  "Names the members: Michael Fleisher (chair), Jonathan Klein and Neela Montgomery",
+  "Names the committee's advisers: Richards, Layton & Finger (legal counsel) and Centerview (financial adviser)",
+  "Says eight parties, counting Permira, were contacted and seven of them signed non-disclosure agreements",
+  "Says management diligence sessions were held with five parties, counting Permira",
+]
+
+[[question]]
+id = "ho-first-quarter-margin"
+kind = "lookup"
+question = "Why did gross margin fall in the first quarter of 2024 compared with the same quarter of 2023? Give the two margin figures, the increase in cost of revenue, and the company's explanation."
+criteria = [
+  "Gross margin of 71.3% in Q1 2024 against 81.9% in Q1 2023",
+  "Gives the increase in cost of revenue as $37.8M (88.1%)",
+  "Attributes it to higher domain registration fees on the domains acquired from Google",
+  "Explains the timing mismatch: domain revenue is recognized ratably over twelve months, while the cost of registering a domain is recognized at purchase or renewal",
+]
+
+[[question]]
+id = "ho-termination-fees"
+kind = "cross-document"
+question = "What termination fees does the merger agreement provide for, who would pay whom, and how did the fees and the outside date change when the agreement was amended and restated in September 2024?"
+criteria = [
+  "Original agreement (May 2024): Squarespace would owe the buyer a termination fee of $198,700,000 (about $198.7M)",
+  "Original agreement: the buyer would owe Squarespace a termination fee of $231,816,666.67 (about $231.8M)",
+  "Amended agreement (September 2024): the fee Squarespace would owe rose to $210,493,094.39 (about $210.5M)",
+  "Amended agreement: the fee the buyer would owe rose to $245,575,276.79 (about $245.6M)",
+  "Says the outside date stayed at May 12, 2025",
+]
+
+[[question]]
+id = "ho-credit-agreement"
+kind = "cross-document"
+question = "Describe the credit agreement Squarespace had in place before the take-private: the size of the term loan and of the revolver, how much of the term loan was outstanding at the end of 2023 and at the end of the first quarter of 2024, when it matured, and what happened to it when the deal closed."
+criteria = [
+  "Says the term loan had been increased to $650.0M and the revolving credit facility was $25.0M",
+  "$571.4M outstanding under the term loan at December 31, 2023",
+  "$559.2M outstanding under the term loan at March 31, 2024",
+  "Maturity date of December 11, 2025",
+  "Says the debt was repaid in full and the commitments terminated on October 17, 2024, when the merger closed",
+]
+
+[[question]]
+id = "ho-tock"
+kind = "cross-document"
+question = "Trace Squarespace's investment in Tock: when it bought the business, what it paid and in what form, what write-down followed, and when, to whom and for how much it later agreed to sell it."
+criteria = [
+  "Acquired on March 31, 2021 for total consideration of $425.7M ($425,710 thousand)",
+  "Says the consideration included $226.8M of cash and $188.2M of Class C common stock",
+  "Non-cash goodwill impairment charge of $225.2M in fiscal 2022, which the company tied to the Tock acquisition",
+  "Says Squarespace agreed on June 21, 2024 to sell Tock to American Express",
+  "Gives the sale price as $400M in cash",
+]
+
+[[question]]
+id = "ho-subscription-metrics"
+kind = "cross-document"
+question = "How did unique subscriptions and annual run-rate revenue develop from the end of 2022 through the first quarter of 2024, and are the annual-report and quarterly-report figures calculated on the same basis?"
+criteria = [
+  "Unique subscriptions of 4,204 thousand (about 4.2M) at year-end 2022 and 4,631 thousand (about 4.6M) at year-end 2023",
+  "Unique subscriptions of 4,912 thousand (about 4.9M) at March 31, 2024",
+  "Annual run-rate revenue of $931.7M at year-end 2022 and $1,105.7M at year-end 2023",
+  "Annual run-rate revenue of $1,117.7M at March 31, 2024",
+  "Says the Q1 2024 report changed the run-rate calculation (last quarter's revenue times 4, instead of last month's revenue times 12), so its figure is not like-for-like with the annual-report figures",
+]
+
+[[question]]
+id = "ho-headcount"
+kind = "cross-document"
+question = "How many people did Squarespace employ at the end of 2022 and at the end of 2023, where were they located at the end of 2023, and does the employee count in the vendor data extract match the company's filings?"
+criteria = [
+  "1,800 full- and part-time employees at December 31, 2022",
+  "1,749 full- and part-time employees at December 31, 2023",
+  "Year-end 2023 locations: 1,530 in the United States, 185 in the European Union, 30 in Australia and 4 in the United Kingdom",
+  "Says the vendor extract shows 1,750 employees for Squarespace, against 1,749 in the annual report (they differ by one)",
+]
+
+[[question]]
+id = "ho-exec-payouts"
+kind = "cross-document"
+question = "For each named executive officer, compare total 2023 compensation as reported in the annual proxy statement with the estimated payout that officer would receive if terminated in connection with the merger, as shown in the merger proxy."
+criteria = [
+  "Nathan Gooden (CFO): 2023 total compensation of $6,804,301 and an estimated merger-related payout of $25,938,560",
+  "Paul Gubbay: 2023 total compensation of $2,893,433 and an estimated merger-related payout of $8,958,816",
+  "Courtenay O'Connor: 2023 total compensation of $2,845,046 and an estimated merger-related payout of $8,120,988",
+  "Anthony Casalena (CEO): 2023 total compensation of $552,146 and no merger-related payout (he is not entitled to severance)",
+]
+
+[[question]]
+id = "ho-trap-midyear-subscriptions"
+kind = "trap"
+question = "How many unique subscriptions did Squarespace report as of June 30, 2024, and what were its total bookings for the second quarter of 2024?"
+criteria = [
+  "Refuses: says the June 30, 2024 subscription count and the Q2 2024 bookings are not in the documents and gives no figure for either (the March 31, 2024 figures may be cited only as the latest available, not as the answer)",
+  "Names the document that would be needed, such as the Form 10-Q for the quarter ended June 30, 2024",
+]
+
+[[question]]
+id = "ho-trap-revised-valuation"
+kind = "trap"
+question = "After the offer was raised to $46.50 per share in September 2024, what per-share value ranges did Centerview's updated financial analyses show?"
+criteria = [
+  "Refuses: says the documents contain no Centerview analysis or opinion at the $46.50 price and gives no value range for it (the May 2024 ranges prepared for the $44.00 price are not offered as the answer)",
+  "Names the document that would be needed, such as the Schedule 14D-9 (solicitation/recommendation statement) for the tender offer, or an updated Centerview opinion or presentation",
+]

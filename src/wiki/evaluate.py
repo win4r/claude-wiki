@@ -52,7 +52,7 @@ def parse_grade(text: str, n: int) -> list[bool] | None:
 
     A grader sometimes corrects itself and prints a second object after the first, so every object in the
     text is tried and the last valid one wins."""
-    text = text or ""
+    text = re.sub(r",(\s*[\]}])", r"\1", text or "")  # a comma before a closing bracket is not JSON; graders write it
     decoder = json.JSONDecoder()
     found = None
     i = text.find("{")
