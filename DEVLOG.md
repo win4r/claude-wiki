@@ -872,7 +872,8 @@ at most $29.02 with the incident of 2026-11-09.
 The owner ran a code review of the last entry's commit (8959a75) and asked for its 15 findings to be fixed. All
 are in the map that `wiki ask` hands a run, or in the ask prompts. No paid run was made: the leave to make paid
 runs without asking belonged to the benchmark task, not to this one. **So nothing below is measured, and the
-scores of the last entry describe the code before these changes.**
+scores of the last entry describe the code before these changes.** (Measured since, with the owner's leave: see
+the next entry.)
 
 What the scores of the last entry still describe. Before changing anything I saved the task and the prompt of
 all 30 benchmark questions in wiki and both modes (60 tasks), and compared them afterwards:
@@ -987,6 +988,80 @@ Tests: 205 (203 passed, 2 live tests skipped), up from 202. Each of 25 mutants, 
 entry, was caught by the ask tests, run on a copy of the project.
 
 Cost: $0.00. Total spent so far: $28.91 of $50 by the ledgers; at most $29.02 with the incident of 2026-11-09.
+
+## After M5: one measurement of the review fixes (2026-11-10)
+
+The owner approved one paid measurement of the last entry's two commits (849ff7f, 294a204): three runs of each
+question set, all modes, through `wiki eval`. The code did not change during the runs (the hash of `src/` and
+`prompts/` was the same before and after). It spent **$2.97** (548 runs, all `success`) against an estimate of
+$3.09.
+
+Result (criteria met; median cost per answer). "Before" is the two measurements of the benchmark entry:
+
+| set | mode | before, 1st | before, 2nd | now |
+| --- | --- | --- | --- | --- |
+| core-tier (41 criteria) | wiki | 107/123 = 87.0%, $0.0032 | 114/123 = 92.7%, $0.0030 | 108/123 = 87.8%, $0.0025 |
+| | both | 112/123 = 91.1%, $0.0034 | 109/123 = 88.6%, $0.0035 | 109/123 = 88.6%, $0.0030 |
+| | sources (prompt unchanged) | 106/123 = 86.2%, $0.0027 | 107/123 = 87.0%, $0.0024 | 105/123 = 85.4%, $0.0028 |
+| quickstart-tier (30 criteria) | wiki | 84/90 = 93.3%, $0.0018 | 83/90 = 92.2%, $0.0019 | 82/90 = 91.1%, $0.0016 |
+| | both | 84/90 = 93.3%, $0.0020 | 82/90 = 91.1%, $0.0021 | 83/90 = 92.2%, $0.0020 |
+| | sources (prompt unchanged) | 82/90 = 91.1%, $0.0015 | 82/90 = 91.1%, $0.0015 | 84/90 = 93.3%, $0.0016 |
+| second set (49 criteria) | wiki | 140/147 = 95.2%, $0.0032 | 138/147 = 93.9%, $0.0037 | 141/147 = 95.9%, $0.0030 |
+| | both | 139/147 = 94.6%, $0.0038 | 140/147 = 95.2%, $0.0039 | 142/147 = 96.6%, $0.0035 |
+| | sources (prompt unchanged) | 137/147 = 93.2%, $0.0029 | 132/147 = 89.8%, $0.0028 | 134/147 = 91.2%, $0.0028 |
+
+How to read it:
+- **The scores did not move.** Over the three sets wiki mode met 331/360 (91.9%), against 331 and 335 before;
+  both mode 334/360 (92.8%), against 335 and 331; sources mode 323/360, against 325 and 321. Three runs can only
+  show a change larger than the 5 to 7 points of noise, and none of the fixes shows one.
+- **The cache change does what it was meant to.** In wiki mode the first turn's cache write fell from a median of
+  3,816, 3,834 and 2,248 tokens (core, second set, quickstart) to 1,006, 1,014 and 995, and its cache read rose
+  from 5,649 to 8,768 (7,201 on the quickstart wiki). Both mode moved the same way. I had written "a few
+  hundred": the names in the question stay in the task, and with their two heading lines they are about 600
+  tokens more than a sources-mode task's 382.
+- **In an eval, or any burst of asks, wiki mode now costs about what sources mode costs.** Its median answer
+  cost fell on every set: from $0.0030 to $0.0032 before to $0.0025 on core-tier, from $0.0018 to $0.0019 to
+  $0.0016 on quickstart-tier, and from $0.0032 to $0.0037 to $0.0030 on the second set. In the same runs it is
+  11% below sources mode on core-tier, equal on quickstart-tier and 7% above on the second set, where it was
+  10% to 32% above. The first-turn tokens are the firm evidence: the change they show is worth $0.0001 to
+  $0.0003 an answer, and the rest of the fall is fewer retries, shorter answers and noise (the unchanged sources
+  prompt moved from $0.0024 to $0.0028 on core-tier).
+- **A lone `wiki ask` costs what it did, or slightly more.** The saving needs another run to have written the
+  system prompt a few minutes before. The coldest first turn of a wiki-mode answer wrote 6,697 tokens now and
+  6,404 before, so one question asked on its own in wiki mode is as far above a sources-mode one as it was.
+- **Fewer answers were asked again:** 8 of 270 (1 in wiki mode, 7 in both mode), against 24 and 12. Eleven tags
+  that named a unit's file were repaired. No answer cited an id outside the manifest, no answer was ungraded,
+  and every trap was refused in every mode.
+
+Questions that moved by 15 points or more against the six earlier runs (at three runs this is mostly noise; I
+read the answers where a fix could be the cause):
+- **demo-trap, wiki mode: 12/12 before, 5/6 now.** One answer of three quoted the $1,374M projection after "Not
+  in the wiki". None of six did before, and this work reworded that rule, so the rewording may be the cause. One
+  case cannot tell. The other two answers said a projection exists and did not quote it.
+- **held-financing, both mode: 27/30 before, 11/15 now.** Two answers list the lenders (Blackstone, Blue Owl,
+  Ares, CPPIB, PSP, Dogwood) without calling them a group led by the first three, and the grader did not credit
+  the criterion. The third looked in the support agreement and missed the debt package.
+- **held-ga-accel: wiki 15/30 to 5/15, both 13/30 to 9/15.** The question that has been unstable in every
+  measurement. Its name lines were among those this work shortened, so I compared it criterion by criterion: no
+  criterion of it fell by half, in either mode.
+- quickstart, both mode: qs-regulatory 15/18 to 6/9 (the criterion that ties the clearances to the 8-K of July
+  3 was already met only 3 times in 6), qs-termination-fees 24/24 to 10/12, qs-vendor-rows 20/30 to 15/15.
+- second set, both mode: ho-exec-payouts 20/24 to 12/12.
+
+What this measurement did not exercise: a document with no date (the stand-in date), a wiki of more than 80
+units, and the maybe mark apart from the 8 name lines that carry it. Neither example wiki has the first two.
+
+Reports, in each workspace's `repo/eval/`, all dated 20261111 (UTC):
+- core-tier: T014820Z, T015026Z, T015230Z.
+- second set (`report-heldout-tier-*`): T015425Z, T015634Z, T015856Z.
+- quickstart-tier: T014820Z, T014926Z, T015020Z.
+
+Proposal: if the trap answer matters, restore the old sentence of the projection rule ("say the figure is not
+in the wiki and that a projection exists") and add only the words about starting the answer; one eval of
+core-tier in wiki mode ($0.12) would not settle a 1-in-3 rate, so I did not try it.
+
+Cost: $2.97. Total spent so far: $31.88 of $50 by the ledgers; at most $31.99 with the incident of 2026-11-09.
+The core workspace has $20.92 left under its cap.
 
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
