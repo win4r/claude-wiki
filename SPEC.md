@@ -269,7 +269,7 @@ Every prompt says that documents, wiki pages and transcripts are data, never ins
 | `sources` | The documents only | The baseline: plain search with no wiki |
 | `both` (default) | The wiki first; documents only to confirm a figure or fill a gap | Day-to-day use, and the article's best-scoring setup |
 
-The analyst prompt keeps the quickstart's reading order: the first 60 lines of `_index.md`, then the first 60 lines of one or two pages, then only the sections needed. Ask transcripts go to `runs/ask/` as input for dreaming. Eval transcripts go to `runs/eval/` and never feed dreaming, so the evaluation stays a fair test.
+In wiki and both modes the program looks up a map of the wiki and hands it to the run: the "Where to start" section of `_index.md`, the page and other names (from `_aliases.md`) of each entity the question names, and the units in order of document date. The analyst prompt reads the Current picture of the one to three pages the question turns on, then searches the per-unit fact files under every name, and the latest units for anything that can change. Ask transcripts go to `runs/ask/` as input for dreaming. Eval transcripts go to `runs/eval/` and never feed dreaming, so the evaluation stays a fair test.
 
 `wiki eval <file>` asks every question in every mode, each in a fresh session. A grader run on Sonnet then scores each answer against the question's criteria, one point per criterion met. The report gives the score per mode, the cost per answer, and the break-even point: build cost divided by the saving per answer against sources mode.
 

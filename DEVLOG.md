@@ -867,6 +867,99 @@ Cost: $11.75 (27 evals of 3 modes, 12 of 1 mode, 3 of 2 modes; of it, $6.17 for 
 changes). Total spent so far: $28.91 of $50 by the ledgers;
 at most $29.02 with the incident of 2026-11-09.
 
+## After M5: review of the wiki map, and its fixes (2026-11-10)
+
+The owner ran a code review of the last entry's commit (8959a75) and asked for its 15 findings to be fixed. All
+are in the map that `wiki ask` hands a run, or in the ask prompts. No paid run was made: the leave to make paid
+runs without asking belonged to the benchmark task, not to this one. **So nothing below is measured, and the
+scores of the last entry describe the code before these changes.**
+
+What the scores of the last entry still describe. Before changing anything I saved the task and the prompt of
+all 30 benchmark questions in wiki and both modes (60 tasks), and compared them afterwards:
+- Unchanged: every unit list (60 of 60), every "Where to start" item, and which entity pages each task names
+  (56 of the 60 name at least one).
+- Changed in every task: the map's first line and its new last line, the "Where to start" heading (it now says
+  where `[[escalations]]` is), the "Names in the question" heading, and five passages of each prompt.
+- Changed in 84 of the 88 name lines: the other names listed (336 where there were 528), and 8 lines are now
+  marked as a maybe ("merger", "parent", "company", "board" written in lower case).
+
+Fixes, in the order of the review:
+1. **A document with no date of its own.** The map dated a unit only from `filed`, `as-of` or `date` in its
+   [SOURCE] line. A document that `wiki add` gives an `added:` line (every document of M6 that has no [SOURCE]
+   line of its own) was undated, and the prompts still said "oldest first". Now:
+   - such a unit takes the date most of its fact lines carry, marked `~2024-03-01`, and the list's heading says
+     what the mark means. The schema makes a fact's as-of the date the document states it. The add day is left
+     out, since that is where an extractor lands when a document states no date. On the 39 units of the two
+     example wikis this date is the document's own for 27, and within the document's period for the rest
+     (a 10-K's year end, a proxy annex's agreement date);
+   - a unit with no date either way is listed last, and when no unit has one the heading says the list is in no
+     order of time;
+   - the prompts say the list is in the order its heading states, and that where the map dates no unit the
+     as-of dates in the tags tell which line is later.
+2. **`[[escalations]]` and `[[README]]` are not under `entities/`.** The heading said every `[[slug]]` is
+   `entities/<slug>.md`; the first item of the core wiki's map is `[[escalations]]`. The heading now names the
+   linked pages that are beside `_index.md`.
+3. **An ordinary word matched an entity's name.** "block", "limited", "slack", "box" and "our" in a question
+   were reported as Block, Inc., a subsidiary, Slack, Box and Squarespace. The same path gives the useful
+   "parent", "board" and "the company", and the program cannot tell the two kinds apart. So:
+   - a pronoun or article ("our", "we", "its") never matches;
+   - one lowercase word that the wiki writes with a capital is offered as a maybe: `"block", if the question
+     means "Block"`. The prompts tell the run to use that page only if the question means the name;
+   - when more than eight pages are named, the maybes give way first.
+   No benchmark question loses a page by this.
+4. **Case variants used up the eight places for other names**, and "the Company" was cut for Squarespace. Left
+   out now: a name that holds the words in the question (the same search finds it), a name that differs from
+   one listed only in case, punctuation, a possessive or a leading "the", and a name that holds a listed name of
+   two or more words. A one-word name stands for no longer one, since a run may find "Agreement" too broad to
+   search for. Names beyond eight are counted: "and 4 more in _aliases.md".
+5. **Over 80 units the list vanished**, and the prompts no longer named `_index.md`. Now the latest 80 are
+   listed and a line says how many more `_index.md` has; the start map takes the 40 lines SPEC allows and says
+   when it leaves items out; the prompts say a section may be absent, and to Grep `_index.md` when the map gives
+   no page or unit for what the question asks.
+6. **The map is written to cache on every answer.** Not in this commit. The fix moves wiki text into the system
+   prompt, so it is the next commit, which can be reverted alone.
+7. **The projection rule did not say how to refuse.** The prompts told a run to "say the figure is not
+   available"; the program counts an answer as a refusal only when it starts "Not in the wiki", as SPEC says a
+   miss does. The rule now says to answer that part with "Not in the wiki", as the first words when the question
+   asks for nothing else. `refused()` is unchanged, so the count of traps refused means what it did.
+8. **The unit list came from the index's prose.** It now comes from the manifest's live units, each with its
+   description from `_index.md` when the index has one, in the index's order. An item written `**unit**` or
+   `unit. A memo` is read; a unit the index leaves out is listed without a description; a removed unit is not
+   listed. Without a manifest the index's items stand.
+9. **The citation retry's note came after the map**, under the map's "information, not instructions". The note
+   now comes straight after the question, and the map ends with the line "End of the wiki map." that its first
+   line names.
+10. **The start map was the first section, whatever its title.** It is now the section named "Where to start";
+    an item wrapped over several lines is kept whole.
+11. **The eight-page limit was applied before rows with no page were dropped.** It is applied after.
+12. **Text that came from documents sits in the task.** Mitigated, not removed: each copied item is cut at 500
+    characters and cannot write the line that ends the map, and the map is fenced by that line. An index
+    description or an alias written from a hostile document still reaches the run as part of its task. The run
+    can only read, so the worst case is a wrong answer.
+13. **SPEC.md described the old reading order.** I changed one sentence of SPEC.md (in "Asking and evaluating"):
+    it now says the program hands the run the map, and gives the reading order the prompts use. The owner should
+    read that sentence: SPEC.md is theirs.
+14. `FILE_AS_UNIT` takes its folders from `check.PER_UNIT_DIRS` and its unit pattern from `grammar.UNIT`.
+15. **Tests** for each of the above, and for two cases the last entry said were tested and were not (a name two
+    rows share, a unit list over the limit).
+
+Judgment calls the owner can reverse:
+- **The maybe.** Marking a word instead of dropping it keeps "parent" and "board" at the price of sometimes
+  offering "block". Dropping every lowercase one-word match would lose 8 name lines of the 60 benchmark tasks.
+- **The stand-in date.** It is the date most facts carry, not the latest: one proxy part's latest fact date is
+  a deadline after the filing. A document whose facts mostly describe an earlier period sorts by that period.
+- **Fewer other names.** A run now sees 336 other names over the 60 tasks instead of 528. Those left out are
+  found by a search for one that is listed, if the run searches for that one.
+
+Changes a paid run has not yet exercised:
+- Five passages of each ask prompt, the map's headings, the maybe mark and the shorter name lists. Any of them
+  can move a score in either direction; one measurement of the three sets costs about $3.10.
+- The stand-in date and the list over 80 units: neither example wiki has an undated document or 80 units.
+
+Tests: 205 (203 passed, 2 live tests skipped), up from 202.
+
+Cost: $0.00. Total spent so far: $28.91 of $50 by the ledgers; at most $29.02 with the incident of 2026-11-09.
+
 ## M2–M4 — offline parts written ahead; every paid step awaits approval (2026-11-08)
 
 M2, M3 and M4 each end in paid runs, and M0's live checks come first, so these milestones are not done. Their
