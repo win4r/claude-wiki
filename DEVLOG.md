@@ -879,9 +879,10 @@ all 30 benchmark questions in wiki and both modes (60 tasks), and compared them 
 - Unchanged: every unit list (60 of 60), every "Where to start" item, and which entity pages each task names
   (56 of the 60 name at least one).
 - Changed in every task: the map's first line and its new last line, the "Where to start" heading (it now says
-  where `[[escalations]]` is), the "Names in the question" heading, and five passages of each prompt.
+  where `[[escalations]]` is), the "Names in the question" heading, and six passages of each prompt.
 - Changed in 84 of the 88 name lines: the other names listed (336 where there were 528), and 8 lines are now
   marked as a maybe ("merger", "parent", "company", "board" written in lower case).
+- Moved by the second commit: the start map and the unit list, from the task to the end of the system prompt.
 
 Fixes, in the order of the review:
 1. **A document with no date of its own.** The map dated a unit only from `filed`, `as-of` or `date` in its
@@ -916,8 +917,8 @@ Fixes, in the order of the review:
    listed and a line says how many more `_index.md` has; the start map takes the 40 lines SPEC allows and says
    when it leaves items out; the prompts say a section may be absent, and to Grep `_index.md` when the map gives
    no page or unit for what the question asks.
-6. **The map is written to cache on every answer.** Not in this commit. The fix moves wiki text into the system
-   prompt, so it is the next commit, which can be reverted alone.
+6. **The map is written to cache on every answer.** Fixed in a commit of its own, described under "The cache
+   change" below: it moves wiki text into the system prompt, so it can be reverted alone.
 7. **The projection rule did not say how to refuse.** The prompts told a run to "say the figure is not
    available"; the program counts an answer as a refusal only when it starts "Not in the wiki", as SPEC says a
    miss does. The rule now says to answer that part with "Not in the wiki", as the first words when the question
@@ -934,14 +935,35 @@ Fixes, in the order of the review:
 11. **The eight-page limit was applied before rows with no page were dropped.** It is applied after.
 12. **Text that came from documents sits in the task.** Mitigated, not removed: each copied item is cut at 500
     characters and cannot write the line that ends the map, and the map is fenced by that line. An index
-    description or an alias written from a hostile document still reaches the run as part of its task. The run
-    can only read, so the worst case is a wrong answer.
+    description or an alias written from a hostile document still reaches the run, in its task or (after the
+    second commit) its system prompt. The run can only read, so the worst case is a wrong answer.
 13. **SPEC.md described the old reading order.** I changed one sentence of SPEC.md (in "Asking and evaluating"):
     it now says the program hands the run the map, and gives the reading order the prompts use. The owner should
     read that sentence: SPEC.md is theirs.
 14. `FILE_AS_UNIT` takes its folders from `check.PER_UNIT_DIRS` and its unit pattern from `grammar.UNIT`.
 15. **Tests** for each of the above, and for two cases the last entry said were tested and were not (a name two
     rows share, a unit list over the limit).
+
+The cache change (commit 2 of this entry):
+- **What the saved runs show.** In three evals run one after another, the first turn of every sampled wiki-mode
+  answer read 5,649 tokens from the prompt cache (the tools and the system prompt, the ask prompt included) and
+  wrote 3,800 to 4,050: the task. Each time the same question had been sent with the same task a few minutes
+  before, and it was written again, where a repeated sources-mode task was read from cache (0 or 382 tokens
+  written). I do not know why a repeat is written again in wiki mode. Either way, text in the task was paid
+  for as a cache write on every answer, and text in the system prompt was read.
+- **The change.** The part of the map that is the same for every question ("Where to start" and the unit list)
+  now ends the system prompt file; the names in the question stay in the task, after the question and any
+  retry note. Over the 30 benchmark questions the wiki-mode task goes from a mean of 5,850 characters to 699,
+  and the system prompt from 3,482 to 9,656, the same text for every question of one wiki.
+- **What it should save, not measured:** about 3,200 tokens an answer read at $0.01 per million instead of
+  written at $0.125, so $0.0003 to $0.0004 an answer, and only in a burst of runs (an eval, or asks within the
+  cache's few minutes). A lone `wiki ask` writes the cache either way and costs what it did. This is not the
+  cost gap of the last entry closed: a paid run has to show it.
+- **What it costs.** Wiki text now sits in the system prompt, a more trusted place than the task (finding 12).
+  It is the index's own text, written by the Index run from page headings and red flags, fenced and cut as
+  above. The alias names, which are closer to the documents' wording, stay in the task. Reverting this commit
+  alone puts the whole map back in the task.
+- **What may change.** A run now reads the map before the question, not after it.
 
 Judgment calls the owner can reverse:
 - **The maybe.** Marking a word instead of dropping it keeps "parent" and "board" at the price of sometimes
@@ -952,11 +974,17 @@ Judgment calls the owner can reverse:
   found by a search for one that is listed, if the run searches for that one.
 
 Changes a paid run has not yet exercised:
-- Five passages of each ask prompt, the map's headings, the maybe mark and the shorter name lists. Any of them
-  can move a score in either direction; one measurement of the three sets costs about $3.10.
+- Six passages of each ask prompt, the map's headings, the maybe mark, the shorter name lists and the map's new
+  place. Any of them can move a score or a cost in either direction; one measurement of the three sets costs
+  about $3.10, and three runs can only show a change in score larger than the 5 to 7 points of noise.
+- The cache change shows in a run's first turn, not in the median cost (unchanged code moved the second set's
+  wiki-mode median from $0.0032 to $0.0037). In wiki mode `cache_creation_input_tokens` should fall from about
+  3,900 to a few hundred, and `cache_read_input_tokens` rise by as much. If they do not, revert the second
+  commit.
 - The stand-in date and the list over 80 units: neither example wiki has an undated document or 80 units.
 
-Tests: 205 (203 passed, 2 live tests skipped), up from 202.
+Tests: 205 (203 passed, 2 live tests skipped), up from 202. Each of 25 mutants, one per fix or guard of this
+entry, was caught by the ask tests, run on a copy of the project.
 
 Cost: $0.00. Total spent so far: $28.91 of $50 by the ledgers; at most $29.02 with the incident of 2026-11-09.
 

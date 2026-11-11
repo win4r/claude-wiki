@@ -193,7 +193,8 @@ def test_ask_prompts_require_unit_ids_and_index_keeps_readme_points():
         for part in ('"Where to start"', '"Names in the question"', '"Units"', "search metrics/*.md first",
                      "search the latest units", "A later document overrides an earlier one",
                      "do not quote that amount in its place", 'answer that part with "Not in the wiki"',
-                     "in the order its heading states", "Grep _index.md for it", '"if the question means"'):
+                     "in the order its heading states", "Grep _index.md for it", '"if the question means"',
+                     '"Where to start" and "Units" end this prompt', '"Names in the question" ends your task'):
             assert part in text, (prompt, part)
     idx = render("index", escalations=True)
     assert "_aliases.md` maps" in idx and '"computed"' in idx and "edit it in place" in idx
